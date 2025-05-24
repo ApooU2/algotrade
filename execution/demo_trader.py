@@ -61,7 +61,7 @@ class DemoTradingEngine:
         self.positions: Dict[str, DemoPosition] = {}
         self.order_history: List[DemoOrder] = []
         self.portfolio_history: List[Dict] = []
-        self.save_state = save_state
+        self.should_save_state = save_state  # Renamed to avoid conflict with method
         self.state_file = "demo_portfolio_state.json"
         
         # Commission settings (can be adjusted)
@@ -225,7 +225,7 @@ class DemoTradingEngine:
         
         # Update portfolio and save state
         self.update_portfolio()
-        if self.save_state:
+        if self.should_save_state:
             self.save_state()
         
         return True

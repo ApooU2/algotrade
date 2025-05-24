@@ -420,10 +420,16 @@ class MLEnsembleStrategy(BaseStrategy):
             
             if signals:
                 signal = signals[0]
+                # Extract reason from metadata or create a descriptive reason
+                metadata = signal.metadata or {}
+                prediction = metadata.get('prediction', 'unknown')
+                confidence = metadata.get('confidence', signal.strength)
+                reason = f"ML prediction: {prediction}, confidence: {confidence:.2f}"
+                
                 return {
                     'action': 'buy' if signal.signal_type == SignalType.BUY else 'sell',
                     'confidence': signal.strength,
-                    'reason': signal.description
+                    'reason': reason
                 }
             else:
                 return {'action': 'hold', 'confidence': 0.0, 'reason': 'No signal'}

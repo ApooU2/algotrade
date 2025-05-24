@@ -209,10 +209,15 @@ class MeanReversionStrategy(BaseStrategy):
             
             if signals:
                 signal = signals[0]
+                # Extract reason from metadata or create a descriptive reason
+                metadata = signal.metadata or {}
+                strategy_name = metadata.get('strategy', 'mean_reversion')
+                reason = f"{strategy_name} signal, strength: {signal.strength:.2f}"
+                
                 return {
                     'action': 'buy' if signal.signal_type == SignalType.BUY else 'sell',
                     'confidence': signal.strength,
-                    'reason': signal.description
+                    'reason': reason
                 }
             else:
                 return {'action': 'hold', 'confidence': 0.0, 'reason': 'No signal'}

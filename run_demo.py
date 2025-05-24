@@ -8,9 +8,10 @@ import os
 import sys
 import time
 import signal
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List
 import pandas as pd
+import pytz
 
 # Add project root to path
 project_root = os.path.dirname(os.path.abspath(__file__))
@@ -53,14 +54,40 @@ class DemoTradingBot:
             'ml_ensemble': MLEnsembleStrategy(ML_CONFIG)
         }
         
-        # Trading symbols (smaller, more affordable stocks for $500 capital)
+        # Trading symbols (expanded for 24/7 testing and small capital trading)
         self.symbols = [
-            'AAPL', 'MSFT', 'GOOGL',                      # High-priced but fractional shares
-            'AMD', 'NVDA', 'TSM',                         # Tech stocks
-            'SHOP.TO', 'TD.TO',                           # Canadian stocks
-            'SPY', 'QQQ', 'VTI',                          # ETFs
-            'F', 'GE', 'T'                                # Lower-priced stocks
+            # Major Tech Stocks (fractional shares available)
+            'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META',
+            'AMD', 'NVDA', 'TSM', 'INTC', 'CRM',
+            
+            # Canadian Stocks (affordable pricing)
+            'SHOP.TO', 'TD.TO', 'RY.TO', 'BAM.TO', 'CNR.TO',
+            
+            # ETFs (diversified exposure)
+            'SPY', 'QQQ', 'VTI', 'IWM', 'EEM',
+            
+            # Affordable Stocks (under $50)
+            'F', 'GE', 'T', 'BAC', 'WFC', 'PFE', 'XOM', 'KO',
+            
+            # Small Cap Stocks (under $20 - perfect for $500 capital)
+            'NOK', 'SIRI', 'BBD-B.TO', 'VALE', 'ITUB', 'GOLD',
+            'SNAP', 'PLTR', 'WISH', 'BB', 'AMC', 'NIO',
+            
+            # Cryptocurrency ETFs/Stocks (24/7 crypto exposure)
+            'BTC-USD', 'ETH-USD', 'ADA-USD', 'SOL-USD',       # Direct crypto
+            'COIN', 'MSTR', 'RIOT', 'MARA',                   # Crypto-related stocks
+            'ARKK', 'ARKF',                                   # Innovation ETFs with crypto exposure
+            
+            # Penny Stocks & Micro-caps (high volatility for testing)
+            'CTRM', 'TOPS', 'SHIP', 'GNUS', 'XELA', 'EXPR'
         ]
+        
+        # Benefits of this expanded universe:
+        # 1. Cryptocurrencies trade 24/7 - perfect for weekend/evening testing
+        # 2. Small cap stocks under $20 - affordable for $500 capital
+        # 3. Mix of volatility levels - from stable ETFs to volatile penny stocks
+        # 4. International exposure - Canadian stocks for currency diversification
+        # 5. Different market caps - from micro-caps to mega-caps for strategy testing
         
         # Setup signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -72,11 +99,79 @@ class DemoTradingBot:
             'momentum': 0.4,        # 40%
             'ml_ensemble': 0.2      # 20%
         }
+        
+        # Maximum position per symbol (diversification limit)
+        self.max_position_pct = 0.15  # Maximum 15% of portfolio in any single symbol
+        
+        # Crypto symbols for aftermarket trading
+        self.crypto_symbols = {
+            'BTC-USD', 'ETH-USD', 'ADA-USD', 'SOL-USD', 'DOT-USD', 
+            'AVAX-USD', 'LINK-USD', 'UNI-USD', 'LTC-USD', 'XRP-USD'
+        }
+        
+        # Market hours (Eastern Time)
+        self.market_open_time = 9, 30  # 9:30 AM
+        self.market_close_time = 16, 0  # 4:00 PM
     
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals gracefully"""
         print(f"\n🛑 Received shutdown signal ({signum}), stopping bot...")
         self.running = False
+    
+    def is_market_hours(self):
+        """Check if US stock market is currently open"""
+        et = pytz.timezone('US/Eastern')
+        now_et = datetime.now(et)
+        
+        # Check if it's a weekday (Monday=0, Sunday=6)
+        if now_et.weekday() >= 5:  # Saturday or Sunday
+            return False
+        
+        # Check if within market hours (9:30 AM - 4:00 PM ET)
+        market_open = now_et.replace(hour=self.market_open_time[0], minute=self.market_open_time[1], second=0, microsecond=0)
+        market_close = now_et.replace(hour=self.market_close_time[0], minute=self.market_close_time[1], second=0, microsecond=0)
+        
+        return market_open <= now_et <= market_close
+    
+    def get_preferred_symbols(self):
+        """Get preferred symbols based on market hours and positions"""
+        current_positions = self.demo_trader.get_portfolio_summary()['positions']
+        has_positions = len(current_positions) > 0
+        is_market_open = self.is_market_hours()
+        
+        if not is_market_open and not has_positions:
+            # Aftermarket hours with no positions - prefer crypto
+            crypto_list = list(self.crypto_symbols)
+            other_symbols = [s for s in self.symbols if s not in self.crypto_symbols]
+            preferred_symbols = crypto_list + other_symbols[:10]  # Add some regular stocks too
+            print(f"🌙 Aftermarket hours detected - preferring crypto trading")
+        else:
+            # Regular market hours or have existing positions
+            preferred_symbols = self.symbols
+            if is_market_open:
+                print(f"🌅 Market hours detected - using full symbol list")
+            else:
+                print(f"🌙 Aftermarket hours but have positions - using all symbols")
+        
+        return preferred_symbols
+    
+    def check_diversification_limit(self, symbol, position_value):
+        """Check if adding this position would exceed diversification limits"""
+        portfolio_value = self.demo_trader.get_portfolio_summary()['total_equity']
+        current_position = self.demo_trader.get_position(symbol)
+        
+        # Calculate what the total position value would be
+        current_position_value = 0
+        if current_position:
+            current_position_value = current_position.shares * current_position.current_price
+        
+        total_position_value = current_position_value + position_value
+        position_percentage = total_position_value / portfolio_value
+        
+        if position_percentage > self.max_position_pct:
+            return False, f"Would exceed {self.max_position_pct*100:.0f}% limit ({position_percentage*100:.1f}%)"
+        
+        return True, ""
     
     def display_banner(self):
         """Display welcome banner"""
@@ -92,11 +187,15 @@ class DemoTradingBot:
         print("="*70)
     
     def fetch_market_data(self) -> Dict[str, pd.DataFrame]:
-        """Fetch current market data for all symbols"""
+        """Fetch current market data for preferred symbols"""
         print("📊 Fetching market data...")
+        
+        # Get preferred symbols based on market hours and positions
+        preferred_symbols = self.get_preferred_symbols()
+        
         market_data = {}
         
-        for symbol in self.symbols:
+        for symbol in preferred_symbols:
             try:
                 # Get recent historical data for strategy analysis
                 data = self.data_manager.get_historical_data(
@@ -107,7 +206,8 @@ class DemoTradingBot:
                 if symbol in data and not data[symbol].empty:
                     market_data[symbol] = data[symbol]
                     current_price = data[symbol]['Close'].iloc[-1]
-                    print(f"   ✅ {symbol}: ${current_price:.2f}")
+                    crypto_indicator = "🪙" if symbol in self.crypto_symbols else "📈"
+                    print(f"   ✅ {crypto_indicator} {symbol}: ${current_price:.2f}")
                 else:
                     print(f"   ❌ {symbol}: No data available")
                     
@@ -183,16 +283,45 @@ class DemoTradingBot:
                     continue
                 
                 if action == 'buy':
-                    # Calculate position size (10% of strategy capital per position for small capital)
-                    position_value = strategy_capital * 0.10  # Increased from 0.02 for small capital
+                    # For small capital accounts, use more aggressive position sizing
+                    if portfolio_value <= 1000:  # Small account
+                        # Use 25% of strategy capital per position for small accounts
+                        position_value = strategy_capital * 0.25
+                    else:
+                        # Use 15% of strategy capital per position for larger accounts
+                        position_value = strategy_capital * 0.15
+                    
+                    # Check diversification limits
+                    can_buy, reason = self.check_diversification_limit(symbol, position_value)
+                    if not can_buy:
+                        print(f"      ❌ Diversification limit: {symbol} - {reason}")
+                        continue
+                    
                     shares = int(position_value / price)
+                    
+                    # For very small capital, ensure we can buy at least 1 share of reasonably priced stocks
+                    if shares == 0 and price <= strategy_capital * 0.5:  # If stock costs less than 50% of strategy capital
+                        shares = 1  # Buy 1 share minimum
+                        position_value = shares * price
+                        
+                        # Re-check diversification with minimum position
+                        can_buy, reason = self.check_diversification_limit(symbol, position_value)
+                        if not can_buy:
+                            print(f"      ❌ Diversification limit (min position): {symbol} - {reason}")
+                            continue
                     
                     if shares > 0 and position_value <= self.demo_trader.cash:
                         success = self.demo_trader.place_order(
                             symbol, shares, 'buy', strategy_name
                         )
                         if success:
-                            print(f"      ✅ Bought {shares} shares of {symbol} @ ${price:.2f}")
+                            crypto_indicator = "🪙" if symbol in self.crypto_symbols else "📈"
+                            print(f"      ✅ {crypto_indicator} Bought {shares} shares of {symbol} @ ${price:.2f} (Total: ${position_value:.2f})")
+                    else:
+                        if shares == 0:
+                            print(f"      ❌ Cannot afford {symbol} @ ${price:.2f} (would need ${price:.2f}, allocated ${position_value:.2f})")
+                        elif position_value > self.demo_trader.cash:
+                            print(f"      ❌ Insufficient cash for {symbol}: need ${position_value:.2f}, have ${self.demo_trader.cash:.2f}")
                 
                 elif action == 'sell':
                     # Check if we have a position to sell
@@ -205,6 +334,8 @@ class DemoTradingBot:
                         )
                         if success:
                             print(f"      ✅ Sold {shares_to_sell} shares of {symbol} @ ${price:.2f}")
+                    else:
+                        print(f"      ❌ No position in {symbol} to sell")
         
         print("💼 Trade execution completed\n")
     
