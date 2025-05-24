@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Algorithmic Trading Bot Dashboard</title>
+    
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Font Awesome -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <!-- Plotly.js -->
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <!-- Socket.IO -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    
+    <style>
+        body {
+            background-color: #f8f9fa;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        .card {
+            border: none;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        
+        .metric-card {
+            text-align: center;
+            padding: 20px;
+        }
+        
+        .metric-value {
+            font-size: 2rem;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        
+        .metric-label {
+            color: #6c757d;
+            font-size: 0.9rem;
+        }
+        
+        .positive { color: #28a745; }
+        .negative { color: #dc3545; }
+        .neutral { color: #17a2b8; }
+        
+        .navbar-brand {
+            font-weight: bold;
+        }
+        
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+        }
+        
+        .status-online { background-color: #28a745; }
+        .status-offline { background-color: #dc3545; }
+        
+        .trade-row {
+            border-bottom: 1px solid #eee;
+            padding: 8px 0;
+        }
+        
+        .trade-row:last-child {
+            border-bottom: none;
+        }
+        
+        .chart-container {
+            height: 400px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#">
+                <i class="fas fa-chart-line me-2"></i>
+                Algorithmic Trading Bot
+            </a>
+            <div class="navbar-nav ms-auto">
+                <span class="navbar-text">
+                    <span class="status-indicator" id="connectionStatus"></span>
+                    <span id="connectionText">Connecting...</span>
+                </span>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <!-- Portfolio Overview -->
+        <div class="row">
+            <div class="col-md-3">
+                <div class="card metric-card">
+                    <div class="metric-value" id="portfolioValue">$0</div>
+                    <div class="metric-label">Portfolio Value</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card metric-card">
+                    <div class="metric-value" id="dailyPnL">$0</div>
+                    <div class="metric-label">Daily P&L</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card metric-card">
+                    <div class="metric-value" id="unrealizedPnL">$0</div>
+                    <div class="metric-label">Unrealized P&L</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card metric-card">
+                    <div class="metric-value" id="activePositions">0</div>
+                    <div class="metric-label">Active Positions</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts -->
+        <div class="row">
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="fas fa-chart-area me-2"></i>Portfolio Performance
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="performanceChart" class="chart-container"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="fas fa-cogs me-2"></i>Strategy Performance
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="strategyChart" class="chart-container"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Current Positions and Recent Trades -->
+        <div class="row">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="fas fa-wallet me-2"></i>Current Positions
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Symbol</th>
+                                        <th>Quantity</th>
+                                        <th>Avg Price</th>
+                                        <th>P&L</th>
+                                        <th>Weight</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="positionsTable">
+                                    <!-- Positions will be populated here -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="fas fa-exchange-alt me-2"></i>Recent Trades
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="recentTrades">
+                            <!-- Recent trades will be populated here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Strategy Breakdown -->
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="fas fa-brain me-2"></i>Strategy Breakdown
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row" id="strategyBreakdown">
+                            <!-- Strategy cards will be populated here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <script>
+        // Initialize Socket.IO connection
+        const socket = io();
+        
+        // Connection status handling
+        socket.on('connect', function() {
+            document.getElementById('connectionStatus').className = 'status-indicator status-online';
+            document.getElementById('connectionText').textContent = 'Connected';
+        });
+        
+        socket.on('disconnect', function() {
+            document.getElementById('connectionStatus').className = 'status-indicator status-offline';
+            document.getElementById('connectionText').textContent = 'Disconnected';
+        });
+        
+        // Portfolio update handler
+        socket.on('portfolio_update', function(data) {
+            updatePortfolioMetrics(data);
+            updatePositionsTable(data.position_details);
+        });
+        
+        // Update portfolio metrics
+        function updatePortfolioMetrics(data) {
+            document.getElementById('portfolioValue').textContent = '$' + Number(data.total_value).toLocaleString('en-US', {minimumFractionDigits: 2});
+            
+            const dailyPnLElement = document.getElementById('dailyPnL');
+            dailyPnLElement.textContent = '$' + Number(data.daily_pnl).toLocaleString('en-US', {minimumFractionDigits: 2});
+            dailyPnLElement.className = 'metric-value ' + (data.daily_pnl >= 0 ? 'positive' : 'negative');
+            
+            const unrealizedPnLElement = document.getElementById('unrealizedPnL');
+            unrealizedPnLElement.textContent = '$' + Number(data.unrealized_pnl).toLocaleString('en-US', {minimumFractionDigits: 2});
+            unrealizedPnLElement.className = 'metric-value ' + (data.unrealized_pnl >= 0 ? 'positive' : 'negative');
+            
+            document.getElementById('activePositions').textContent = data.positions;
+        }
+        
+        // Update positions table
+        function updatePositionsTable(positions) {
+            const tbody = document.getElementById('positionsTable');
+            tbody.innerHTML = '';
+            
+            Object.entries(positions).forEach(([symbol, details]) => {
+                const row = document.createElement('tr');
+                const pnlClass = details.unrealized_pnl >= 0 ? 'text-success' : 'text-danger';
+                
+                row.innerHTML = `
+                    <td><strong>${symbol}</strong></td>
+                    <td>${Number(details.quantity).toFixed(2)}</td>
+                    <td>$${Number(details.avg_price).toFixed(2)}</td>
+                    <td class="${pnlClass}">$${Number(details.unrealized_pnl).toFixed(2)}</td>
+                    <td>${(details.weight * 100).toFixed(1)}%</td>
+                `;
+                
+                tbody.appendChild(row);
+            });
+        }
+        
+        // Load performance chart
+        function loadPerformanceChart() {
+            fetch('/api/performance_chart')
+                .then(response => response.json())
+                .then(data => {
+                    Plotly.newPlot('performanceChart', data.data, data.layout, {responsive: true});
+                })
+                .catch(error => console.error('Error loading performance chart:', error));
+        }
+        
+        // Load strategy chart
+        function loadStrategyChart() {
+            fetch('/api/strategy_chart')
+                .then(response => response.json())
+                .then(data => {
+                    Plotly.newPlot('strategyChart', data.data, data.layout, {responsive: true});
+                })
+                .catch(error => console.error('Error loading strategy chart:', error));
+        }
+        
+        // Load recent trades
+        function loadRecentTrades() {
+            fetch('/api/trades')
+                .then(response => response.json())
+                .then(trades => {
+                    const container = document.getElementById('recentTrades');
+                    container.innerHTML = '';
+                    
+                    if (trades.length === 0) {
+                        container.innerHTML = '<p class="text-muted">No recent trades</p>';
+                        return;
+                    }
+                    
+                    trades.slice(-10).reverse().forEach(trade => {
+                        const tradeDiv = document.createElement('div');
+                        tradeDiv.className = 'trade-row';
+                        
+                        const sideClass = trade.order?.side === 'buy' ? 'text-success' : 'text-danger';
+                        const sideIcon = trade.order?.side === 'buy' ? 'fa-arrow-up' : 'fa-arrow-down';
+                        
+                        tradeDiv.innerHTML = `
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <i class="fas ${sideIcon} ${sideClass} me-2"></i>
+                                    <strong>${trade.order?.symbol || 'N/A'}</strong>
+                                    <span class="ms-2">${trade.order?.quantity || 0} shares</span>
+                                </div>
+                                <div class="text-end">
+                                    <div>$${Number(trade.execution_price || 0).toFixed(2)}</div>
+                                    <small class="text-muted">${new Date(trade.timestamp).toLocaleTimeString()}</small>
+                                </div>
+                            </div>
+                        `;
+                        
+                        container.appendChild(tradeDiv);
+                    });
+                })
+                .catch(error => console.error('Error loading recent trades:', error));
+        }
+        
+        // Load strategy breakdown
+        function loadStrategyBreakdown() {
+            fetch('/api/strategies')
+                .then(response => response.json())
+                .then(strategies => {
+                    const container = document.getElementById('strategyBreakdown');
+                    container.innerHTML = '';
+                    
+                    Object.entries(strategies).forEach(([name, data]) => {
+                        const strategyCard = document.createElement('div');
+                        strategyCard.className = 'col-md-3';
+                        
+                        const returnClass = data.return >= 0 ? 'text-success' : 'text-danger';
+                        
+                        strategyCard.innerHTML = `
+                            <div class="card text-center">
+                                <div class="card-body">
+                                    <h6 class="card-title">${name.replace('_', ' ').toUpperCase()}</h6>
+                                    <div class="metric-value ${returnClass}">
+                                        ${(data.return * 100).toFixed(1)}%
+                                    </div>
+                                    <div class="metric-label">Return</div>
+                                    <hr>
+                                    <div class="row">
+                                        <div class="col-6">
+                                            <div><strong>${(data.win_rate * 100).toFixed(0)}%</strong></div>
+                                            <div class="metric-label">Win Rate</div>
+                                        </div>
+                                        <div class="col-6">
+                                            <div><strong>${data.trades}</strong></div>
+                                            <div class="metric-label">Trades</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                        
+                        container.appendChild(strategyCard);
+                    });
+                })
+                .catch(error => console.error('Error loading strategy breakdown:', error));
+        }
+        
+        // Initialize dashboard
+        function initDashboard() {
+            loadPerformanceChart();
+            loadStrategyChart();
+            loadRecentTrades();
+            loadStrategyBreakdown();
+            
+            // Refresh data every 30 seconds
+            setInterval(() => {
+                loadRecentTrades();
+                loadStrategyBreakdown();
+            }, 30000);
+            
+            // Refresh charts every 5 minutes
+            setInterval(() => {
+                loadPerformanceChart();
+                loadStrategyChart();
+            }, 300000);
+        }
+        
+        // Start dashboard when page loads
+        document.addEventListener('DOMContentLoaded', initDashboard);
+    </script>
+</body>
+</html>
