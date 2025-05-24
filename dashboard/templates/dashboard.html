@@ -342,36 +342,106 @@
                     const container = document.getElementById('strategyBreakdown');
                     container.innerHTML = '';
                     
-                    Object.entries(strategies).forEach(([name, data]) => {
-                        const strategyCard = document.createElement('div');
-                        strategyCard.className = 'col-md-3';
+                    // Group strategies by category
+                    const strategyCategories = {
+                        'Core Technical': ['mean_reversion', 'momentum', 'breakout'],
+                        'Advanced Technical': ['rsi_divergence', 'vwap', 'bollinger_squeeze', 'macd_histogram', 'ichimoku', 'support_resistance'],
+                        'Volume & Microstructure': ['volume_profile', 'market_microstructure'],
+                        'Specialized': ['gap_trading', 'pairs_trading', 'ml_ensemble']
+                    };
+                    
+                    Object.entries(strategyCategories).forEach(([category, strategyNames]) => {
+                        // Create category header
+                        const categoryHeader = document.createElement('div');
+                        categoryHeader.className = 'col-12 mb-2';
+                        categoryHeader.innerHTML = `<h6 class="text-muted">${category}</h6>`;
+                        container.appendChild(categoryHeader);
                         
-                        const returnClass = data.return >= 0 ? 'text-success' : 'text-danger';
-                        
-                        strategyCard.innerHTML = `
-                            <div class="card text-center">
-                                <div class="card-body">
-                                    <h6 class="card-title">${name.replace('_', ' ').toUpperCase()}</h6>
-                                    <div class="metric-value ${returnClass}">
-                                        ${(data.return * 100).toFixed(1)}%
+                        // Add strategies in this category
+                        strategyNames.forEach(name => {
+                            if (strategies[name]) {
+                                const data = strategies[name];
+                                const strategyCard = document.createElement('div');
+                                strategyCard.className = 'col-md-4 col-lg-3 mb-3';
+                                
+                                const returnClass = data.return >= 0 ? 'text-success' : 'text-danger';
+                                const displayName = name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                                
+                                strategyCard.innerHTML = `
+                                    <div class="card text-center h-100">
+                                        <div class="card-body">
+                                            <h6 class="card-title text-truncate" title="${displayName}">${displayName}</h6>
+                                            <div class="metric-value ${returnClass}">
+                                                ${(data.return * 100).toFixed(1)}%
+                                            </div>
+                                            <div class="metric-label">Return</div>
+                                            <hr>
+                                            <div class="row">
+                                                <div class="col-6">
+                                                    <div><strong>${(data.win_rate * 100).toFixed(0)}%</strong></div>
+                                                    <div class="metric-label">Win Rate</div>
+                                                </div>
+                                                <div class="col-6">
+                                                    <div><strong>${data.trades}</strong></div>
+                                                    <div class="metric-label">Trades</div>
+                                                </div>
+                                            </div>
+                                            ${data.sharpe_ratio ? `
+                                            <div class="mt-2">
+                                                <div><strong>${data.sharpe_ratio.toFixed(2)}</strong></div>
+                                                <div class="metric-label">Sharpe</div>
+                                            </div>
+                                            ` : ''}
+                                        </div>
                                     </div>
-                                    <div class="metric-label">Return</div>
-                                    <hr>
-                                    <div class="row">
-                                        <div class="col-6">
-                                            <div><strong>${(data.win_rate * 100).toFixed(0)}%</strong></div>
-                                            <div class="metric-label">Win Rate</div>
+                                `;
+                                
+                                container.appendChild(strategyCard);
+                            }
+                        });
+                    });
+                    
+                    // Add any remaining strategies not in categories
+                    Object.entries(strategies).forEach(([name, data]) => {
+                        const isInCategory = Object.values(strategyCategories).some(cat => cat.includes(name));
+                        if (!isInCategory) {
+                            const strategyCard = document.createElement('div');
+                            strategyCard.className = 'col-md-4 col-lg-3 mb-3';
+                            
+                            const returnClass = data.return >= 0 ? 'text-success' : 'text-danger';
+                            const displayName = name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                            
+                            strategyCard.innerHTML = `
+                                <div class="card text-center h-100">
+                                    <div class="card-body">
+                                        <h6 class="card-title text-truncate" title="${displayName}">${displayName}</h6>
+                                        <div class="metric-value ${returnClass}">
+                                            ${(data.return * 100).toFixed(1)}%
                                         </div>
-                                        <div class="col-6">
-                                            <div><strong>${data.trades}</strong></div>
-                                            <div class="metric-label">Trades</div>
+                                        <div class="metric-label">Return</div>
+                                        <hr>
+                                        <div class="row">
+                                            <div class="col-6">
+                                                <div><strong>${(data.win_rate * 100).toFixed(0)}%</strong></div>
+                                                <div class="metric-label">Win Rate</div>
+                                            </div>
+                                            <div class="col-6">
+                                                <div><strong>${data.trades}</strong></div>
+                                                <div class="metric-label">Trades</div>
+                                            </div>
                                         </div>
+                                        ${data.sharpe_ratio ? `
+                                        <div class="mt-2">
+                                            <div><strong>${data.sharpe_ratio.toFixed(2)}</strong></div>
+                                            <div class="metric-label">Sharpe</div>
+                                        </div>
+                                        ` : ''}
                                     </div>
                                 </div>
-                            </div>
-                        `;
-                        
-                        container.appendChild(strategyCard);
+                            `;
+                            
+                            container.appendChild(strategyCard);
+                        }
                     });
                 })
                 .catch(error => console.error('Error loading strategy breakdown:', error));

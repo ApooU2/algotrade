@@ -39,11 +39,27 @@ class TradingConfig:
     def __post_init__(self):
         if self.STRATEGIES is None:
             self.STRATEGIES = [
+                # Core Technical Strategies
                 'mean_reversion',
-                'momentum',
+                'momentum', 
                 'breakout',
-                'ml_ensemble',
-                'pairs_trading'
+                # Advanced Technical Strategies
+                'rsi_divergence',
+                'vwap',
+                'bollinger_squeeze',
+                'macd_histogram',
+                'ichimoku',
+                'support_resistance',
+                # Volume-Based Strategies
+                'volume_profile',
+                # Market Microstructure
+                'market_microstructure',
+                # Gap Trading
+                'gap_trading',
+                # Statistical Arbitrage
+                'pairs_trading',
+                # Machine Learning
+                'ml_ensemble'
             ]
         
         if self.SYMBOLS is None:
@@ -105,6 +121,92 @@ PAIRS_TRADING_CONFIG = {
     'correlation_threshold': 0.8,
     'cointegration_threshold': 0.05,
     'max_holding_period': 10
+}
+
+# Advanced Technical Strategy Configurations
+RSI_DIVERGENCE_CONFIG = {
+    'rsi_period': 14,
+    'lookback_period': 50,
+    'divergence_threshold': 0.7,
+    'min_divergence_bars': 5,
+    'price_change_threshold': 0.02,
+    'volume_confirmation': True
+}
+
+VWAP_CONFIG = {
+    'vwap_period': 20,
+    'band_std': 1.5,
+    'volume_threshold': 1.2,
+    'trend_confirmation': True,
+    'multi_timeframe': True,
+    'anchored_vwap': True
+}
+
+BOLLINGER_SQUEEZE_CONFIG = {
+    'bb_period': 20,
+    'bb_std': 2.0,
+    'kc_period': 20,
+    'kc_atr_mult': 1.5,
+    'squeeze_threshold': 0.9,
+    'momentum_period': 12,
+    'min_squeeze_bars': 5
+}
+
+MACD_HISTOGRAM_CONFIG = {
+    'macd_fast': 12,
+    'macd_slow': 26,
+    'macd_signal': 9,
+    'histogram_threshold': 0.02,
+    'divergence_detection': True,
+    'zero_line_analysis': True
+}
+
+ICHIMOKU_CONFIG = {
+    'tenkan_period': 9,
+    'kijun_period': 26,
+    'senkou_span_b': 52,
+    'displacement': 26,
+    'cloud_analysis': True,
+    'trend_strength_threshold': 0.7
+}
+
+SUPPORT_RESISTANCE_CONFIG = {
+    'lookback_period': 50,
+    'level_strength_threshold': 3,
+    'fibonacci_levels': True,
+    'pivot_points': True,
+    'min_level_age': 5,
+    'max_level_age': 200
+}
+
+# Volume-Based Strategy Configurations
+VOLUME_PROFILE_CONFIG = {
+    'value_area_percent': 70,
+    'profile_period': 20,
+    'price_bins': 50,
+    'high_volume_node_threshold': 1.5,
+    'poc_bounce_threshold': 0.005,
+    'va_breakout_threshold': 0.01
+}
+
+# Market Microstructure Configuration
+MARKET_MICROSTRUCTURE_CONFIG = {
+    'spread_threshold': 0.005,
+    'volume_imbalance_threshold': 0.6,
+    'aggressive_order_threshold': 0.7,
+    'liquidity_threshold': 100000,
+    'price_efficiency_threshold': 0.8,
+    'order_flow_window': 15
+}
+
+# Gap Trading Configuration
+GAP_TRADING_CONFIG = {
+    'min_gap_percent': 1.0,
+    'max_gap_percent': 8.0,
+    'gap_fill_threshold': 0.75,
+    'continuation_threshold': 0.25,
+    'volume_confirmation': True,
+    'min_volume_ratio': 1.5
 }
 
 RISK_CONFIG = {

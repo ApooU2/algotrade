@@ -22,7 +22,17 @@ from data.data_manager import DataManager
 from strategies.mean_reversion import MeanReversionStrategy
 from strategies.momentum import MomentumStrategy
 from strategies.ml_ensemble import MLEnsembleStrategy
-from config.config import MEAN_REVERSION_CONFIG, MOMENTUM_CONFIG, ML_CONFIG
+from strategies.vwap_strategy import VWAPStrategy
+from strategies.bollinger_squeeze import BollingerSqueezeStrategy
+from strategies.ichimoku_strategy import IchimokuStrategy
+from strategies.support_resistance import SupportResistanceStrategy
+from strategies.volume_profile import VolumeProfileStrategy
+from strategies.market_microstructure import MarketMicrostructureStrategy
+from strategies.gap_trading import GapTradingStrategy
+from config.config import (MEAN_REVERSION_CONFIG, MOMENTUM_CONFIG, ML_CONFIG,
+                          VWAP_CONFIG, BOLLINGER_SQUEEZE_CONFIG, ICHIMOKU_CONFIG,
+                          SUPPORT_RESISTANCE_CONFIG, VOLUME_PROFILE_CONFIG, 
+                          MARKET_MICROSTRUCTURE_CONFIG, GAP_TRADING_CONFIG)
 import logging
 
 # Setup logging
@@ -47,11 +57,27 @@ class DemoTradingBot:
         self.data_manager = DataManager()
         self.running = False
         
-        # Initialize strategies
+        # Initialize strategies - include new advanced strategies for comprehensive testing
         self.strategies = {
+            # Core strategies
             'mean_reversion': MeanReversionStrategy(MEAN_REVERSION_CONFIG),
             'momentum': MomentumStrategy(MOMENTUM_CONFIG),
-            'ml_ensemble': MLEnsembleStrategy(ML_CONFIG)
+            'ml_ensemble': MLEnsembleStrategy(ML_CONFIG),
+            
+            # Advanced technical strategies
+            'vwap': VWAPStrategy(VWAP_CONFIG),
+            'bollinger_squeeze': BollingerSqueezeStrategy(BOLLINGER_SQUEEZE_CONFIG),
+            'ichimoku': IchimokuStrategy(ICHIMOKU_CONFIG),
+            'support_resistance': SupportResistanceStrategy(SUPPORT_RESISTANCE_CONFIG),
+            
+            # Volume-based strategies
+            'volume_profile': VolumeProfileStrategy(VOLUME_PROFILE_CONFIG),
+            
+            # Market microstructure analysis
+            'market_microstructure': MarketMicrostructureStrategy(MARKET_MICROSTRUCTURE_CONFIG),
+            
+            # Gap trading for overnight opportunities
+            'gap_trading': GapTradingStrategy(GAP_TRADING_CONFIG)
         }
         
         # Trading symbols (expanded for 24/7 testing and small capital trading)
@@ -427,7 +453,7 @@ class DemoTradingBot:
             logger.error(f"Error in trading cycle: {e}")
             print(f"❌ Error in trading cycle: {e}")
     
-    def run(self, cycle_interval_minutes: int = 1):
+    def run(self, cycle_interval_minutes: float = 1):
         """
         Main trading loop
         
@@ -454,19 +480,22 @@ class DemoTradingBot:
                 # Wait for next cycle
                 print(f"⏰ Waiting {cycle_interval_minutes} minute(s) until next cycle...")
                 
-                for i in range(cycle_interval_minutes * 60):  # Convert to seconds
+                # Convert to integer seconds for range()
+                total_seconds = int(cycle_interval_minutes * 60)
+                
+                for i in range(total_seconds):
                     if not self.running:
                         break
                     time.sleep(1)
                     
-                    # Show countdown every 30 seconds for 1-minute intervals
-                    if cycle_interval_minutes == 1 and i % 30 == 0 and i > 0:
-                        remaining_seconds = (cycle_interval_minutes * 60 - i)
+                    # Show countdown every 30 seconds for short intervals
+                    if cycle_interval_minutes <= 1 and i % 30 == 0 and i > 0:
+                        remaining_seconds = (total_seconds - i)
                         if remaining_seconds > 0:
                             print(f"   ⏱️  {remaining_seconds} seconds remaining...")
                     # Show countdown every minute for longer intervals
                     elif cycle_interval_minutes > 1 and i % 60 == 0 and i > 0:
-                        remaining_minutes = (cycle_interval_minutes * 60 - i) // 60
+                        remaining_minutes = (total_seconds - i) // 60
                         if remaining_minutes > 0:
                             print(f"   ⏱️  {remaining_minutes} minutes remaining...")
         
@@ -519,7 +548,7 @@ def main():
     parser = argparse.ArgumentParser(description='Demo Trading Bot')
     parser.add_argument('--capital', type=float, default=500,
                        help='Initial capital (default: $500)')
-    parser.add_argument('--interval', type=int, default=1,
+    parser.add_argument('--interval', type=float, default=1,
                        help='Trading cycle interval in minutes (default: 1)')
     parser.add_argument('--reset', action='store_true',
                        help='Reset portfolio to initial state')

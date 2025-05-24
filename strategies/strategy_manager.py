@@ -16,6 +16,15 @@ from strategies.momentum import MomentumStrategy
 from strategies.breakout import BreakoutStrategy
 from strategies.ml_ensemble import MLEnsembleStrategy
 from strategies.pairs_trading import PairsTradingStrategy
+from strategies.rsi_divergence import RSIDivergenceStrategy
+from strategies.vwap_strategy import VWAPStrategy
+from strategies.bollinger_squeeze import BollingerSqueezeStrategy
+from strategies.macd_histogram import MACDHistogramStrategy
+from strategies.ichimoku_strategy import IchimokuStrategy
+from strategies.support_resistance import SupportResistanceStrategy
+from strategies.volume_profile import VolumeProfileStrategy
+from strategies.market_microstructure import MarketMicrostructureStrategy
+from strategies.gap_trading import GapTradingStrategy
 from data.data_manager import data_manager
 from execution.execution_engine import execution_engine
 from config.config import CONFIG
@@ -42,7 +51,7 @@ class StrategyManager:
         """
         Initialize all trading strategies
         """
-        # Mean Reversion Strategy
+        # Core Technical Strategies
         self.strategies['mean_reversion'] = MeanReversionStrategy({
             'bb_period': 20,
             'rsi_oversold': 25,
@@ -50,7 +59,6 @@ class StrategyManager:
             'min_volume_ratio': 1.5
         })
         
-        # Momentum Strategy
         self.strategies['momentum'] = MomentumStrategy({
             'short_ma': 10,
             'long_ma': 30,
@@ -58,7 +66,6 @@ class StrategyManager:
             'min_momentum_threshold': 0.03
         })
         
-        # Breakout Strategy
         self.strategies['breakout'] = BreakoutStrategy({
             'lookback_period': 25,
             'min_volume_ratio': 2.0,
@@ -66,19 +73,86 @@ class StrategyManager:
             'min_consolidation_days': 7
         })
         
-        # ML Ensemble Strategy
-        self.strategies['ml_ensemble'] = MLEnsembleStrategy({
-            'min_prediction_confidence': 0.65,
-            'retrain_frequency': 21,
-            'ensemble_threshold': 0.75
+        # Advanced Technical Strategies
+        self.strategies['rsi_divergence'] = RSIDivergenceStrategy({
+            'rsi_period': 14,
+            'lookback_period': 50,
+            'divergence_threshold': 0.7,
+            'min_divergence_bars': 5
         })
         
-        # Pairs Trading Strategy
+        self.strategies['vwap'] = VWAPStrategy({
+            'vwap_period': 20,
+            'band_std': 1.5,
+            'volume_threshold': 1.2,
+            'trend_confirmation': True
+        })
+        
+        self.strategies['bollinger_squeeze'] = BollingerSqueezeStrategy({
+            'bb_period': 20,
+            'kc_period': 20,
+            'squeeze_threshold': 0.9,
+            'momentum_period': 12
+        })
+        
+        self.strategies['macd_histogram'] = MACDHistogramStrategy({
+            'macd_fast': 12,
+            'macd_slow': 26,
+            'macd_signal': 9,
+            'histogram_threshold': 0.02
+        })
+        
+        self.strategies['ichimoku'] = IchimokuStrategy({
+            'tenkan_period': 9,
+            'kijun_period': 26,
+            'senkou_span_b': 52,
+            'displacement': 26
+        })
+        
+        self.strategies['support_resistance'] = SupportResistanceStrategy({
+            'lookback_period': 50,
+            'level_strength_threshold': 3,
+            'fibonacci_levels': True,
+            'pivot_points': True
+        })
+        
+        # Volume-Based Strategies
+        self.strategies['volume_profile'] = VolumeProfileStrategy({
+            'value_area_percent': 70,
+            'profile_period': 20,
+            'price_bins': 50,
+            'high_volume_node_threshold': 1.5
+        })
+        
+        # Market Microstructure Strategy
+        self.strategies['market_microstructure'] = MarketMicrostructureStrategy({
+            'spread_threshold': 0.005,
+            'volume_imbalance_threshold': 0.6,
+            'aggressive_order_threshold': 0.7,
+            'liquidity_threshold': 100000
+        })
+        
+        # Gap Trading Strategy
+        self.strategies['gap_trading'] = GapTradingStrategy({
+            'min_gap_percent': 1.0,
+            'max_gap_percent': 8.0,
+            'gap_fill_threshold': 0.75,
+            'continuation_threshold': 0.25
+        })
+        
+        # Statistical Arbitrage
         self.strategies['pairs_trading'] = PairsTradingStrategy({
             'min_correlation': 0.75,
             'entry_zscore': 2.2,
             'exit_zscore': 0.3,
             'max_half_life': 25
+        })
+        
+        # ML Ensemble Strategy
+        self.strategies['ml_ensemble'] = MLEnsembleStrategy({
+            'min_prediction_confidence': 0.65,
+            'retrain_frequency': 21,
+            'ensemble_threshold': 0.75
         })
         
         # Initialize equal weights
