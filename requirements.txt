@@ -1,6 +1,6 @@
 # Core Data Analysis
 pandas>=2.0.0
-numpy>=1.24.0
+numpy>=1.24.0,<2.0.0  # Compatible with pandas_ta
 scipy>=1.10.0
 
 # Visualization

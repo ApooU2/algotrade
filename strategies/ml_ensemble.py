@@ -405,3 +405,28 @@ class MLEnsembleStrategy(BaseStrategy):
         position_size = min(position_size, max_position)
         
         return position_size * portfolio_value / signal.price
+    
+    def generate_signal(self, data: pd.DataFrame) -> Dict:
+        """
+        Generate a single signal for demo trading (adapter for generate_signals)
+        """
+        try:
+            # Create a temporary data dict for compatibility
+            symbol = 'TEMP'
+            temp_data = {symbol: data}
+            
+            # Get signals using the main method
+            signals = self.generate_signals(temp_data)
+            
+            if signals:
+                signal = signals[0]
+                return {
+                    'action': 'buy' if signal.signal_type == SignalType.BUY else 'sell',
+                    'confidence': signal.strength,
+                    'reason': signal.description
+                }
+            else:
+                return {'action': 'hold', 'confidence': 0.0, 'reason': 'No signal'}
+                
+        except Exception as e:
+            return {'action': 'hold', 'confidence': 0.0, 'reason': f'Error: {e}'}
