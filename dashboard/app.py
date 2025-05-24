@@ -1,6 +1,6 @@
 """
 Real-time Trading Dashboard
-Web-based interface for monitoring trading bot performance
+Modern web-based interface for monitoring trading bot performance with live updates
 """
 from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO, emit
@@ -14,23 +14,152 @@ import numpy as np
 import plotly
 import plotly.graph_objs as go
 import plotly.express as px
+import threading
+import time
+import logging
+from threading import Lock
 
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from execution.execution_engine import execution_engine
-from config.config import CONFIG
+try:
+    from execution.execution_engine import execution_engine
+    from config.config import CONFIG
+except ImportError:
+    # Fallback for demo mode
+    execution_engine = None
+    CONFIG = {}
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'trading_bot_secret_key'
-socketio = SocketIO(app, cors_allowed_origins="*")
+app.config['SECRET_KEY'] = 'trading_bot_secret_key_2024'
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+
+# Global state management
+class DashboardState:
+    """Thread-safe dashboard state management"""
+    
+    def __init__(self):
+        self._lock = Lock()
+        self._clients = set()
+        self._last_portfolio_data = None
+        self._activity_log = []
+        self._max_activity_items = 100
+        
+    def add_client(self, client_id):
+        with self._lock:
+            self._clients.add(client_id)
+    
+    def remove_client(self, client_id):
+        with self._lock:
+            self._clients.discard(client_id)
+    
+    def get_client_count(self):
+        with self._lock:
+            return len(self._clients)
+    
+    def update_portfolio(self, data):
+        with self._lock:
+            self._last_portfolio_data = data
+    
+    def get_portfolio(self):
+        with self._lock:
+            return self._last_portfolio_data
+    
+    def add_activity(self, activity):
+        with self._lock:
+            self._activity_log.insert(0, {
+                **activity,
+                'timestamp': datetime.now().isoformat(),
+                'id': len(self._activity_log)
+            })
+            # Keep only recent activities
+            if len(self._activity_log) > self._max_activity_items:
+                self._activity_log = self._activity_log[:self._max_activity_items]
+    
+    def get_recent_activity(self, limit=50):
+        with self._lock:
+            return self._activity_log[:limit]
+
+dashboard_state = DashboardState()
 
 class DashboardData:
-    """Data provider for dashboard"""
+    """Enhanced data provider for dashboard with real-time capabilities"""
     
     def __init__(self):
         self.db_path = os.path.join(os.path.dirname(__file__), '..', 'data', 'trading_data.db')
         self.demo_state_path = os.path.join(os.path.dirname(__file__), '..', 'demo_portfolio_state.json')
+        self.log_file_path = os.path.join(os.path.dirname(__file__), '..', 'demo_trading.log')
+        self._last_log_position = 0
+        
+        # Setup log monitoring
+        self._setup_log_monitoring()
+    
+    def _setup_log_monitoring(self):
+        """Setup log file monitoring for real-time updates"""
+        def monitor_logs():
+            while True:
+                try:
+                    if os.path.exists(self.log_file_path):
+                        with open(self.log_file_path, 'r') as f:
+                            f.seek(self._last_log_position)
+                            new_lines = f.readlines()
+                            self._last_log_position = f.tell()
+                            
+                            for line in new_lines:
+                                if line.strip():
+                                    self._process_log_line(line.strip())
+                    
+                    time.sleep(2)  # Check every 2 seconds
+                except Exception as e:
+                    print(f"Log monitoring error: {e}")
+                    time.sleep(5)
+        
+        # Start log monitoring in background thread
+        log_thread = threading.Thread(target=monitor_logs, daemon=True)
+        log_thread.start()
+    
+    def _process_log_line(self, log_line):
+        """Process log line and emit relevant updates"""
+        try:
+            # Parse log line for important events
+            if 'Bought' in log_line or 'Sold' in log_line:
+                # Trade execution
+                dashboard_state.add_activity({
+                    'type': 'trade',
+                    'message': log_line,
+                    'level': 'info'
+                })
+                socketio.emit('log_message', {
+                    'level': 'INFO',
+                    'message': log_line,
+                    'type': 'trade'
+                })
+            elif 'signal' in log_line.lower() and 'generated' in log_line.lower():
+                # Signal generation
+                dashboard_state.add_activity({
+                    'type': 'signal',
+                    'message': log_line,
+                    'level': 'info'
+                })
+                socketio.emit('log_message', {
+                    'level': 'INFO',
+                    'message': log_line,
+                    'type': 'signal'
+                })
+            elif 'ERROR' in log_line or 'WARNING' in log_line:
+                # Error or warning
+                level = 'ERROR' if 'ERROR' in log_line else 'WARNING'
+                dashboard_state.add_activity({
+                    'type': 'error' if level == 'ERROR' else 'warning',
+                    'message': log_line,
+                    'level': level.lower()
+                })
+                socketio.emit('log_message', {
+                    'level': level,
+                    'message': log_line
+                })
+        except Exception as e:
+            print(f"Error processing log line: {e}")
     
     def _load_demo_portfolio_state(self):
         """Load demo portfolio state from JSON file"""
@@ -48,42 +177,20 @@ class DashboardData:
         demo_state = self._load_demo_portfolio_state()
         
         if not demo_state:
-            # Enhanced fallback data that shows the system is working
+            # Return empty/initial state to show "start chatbot" message
             return {
-                'total_value': 100500.0,
-                'cash': 85000.0,
-                'positions_value': 15500.0,
-                'positions': 3,
-                'unrealized_pnl': 1250.50,
-                'daily_pnl': 750.25,
-                'total_return': 0.50,
-                'initial_capital': 100000.0,
-                'position_details': {
-                    'AAPL': {
-                        'shares': 25,
-                        'entry_price': 180.50,
-                        'current_price': 185.25,
-                        'market_value': 4631.25,
-                        'unrealized_pnl': 118.75,
-                        'unrealized_pnl_pct': 2.63
-                    },
-                    'SPY': {
-                        'shares': 20,
-                        'entry_price': 425.00,
-                        'current_price': 428.50,
-                        'market_value': 8570.00,
-                        'unrealized_pnl': 70.00,
-                        'unrealized_pnl_pct': 0.82
-                    },
-                    'QQQ': {
-                        'shares': 8,
-                        'entry_price': 375.25,
-                        'current_price': 380.75,
-                        'market_value': 3046.00,
-                        'unrealized_pnl': 44.00,
-                        'unrealized_pnl_pct': 1.47
-                    }
-                }
+                'total_value': 0.0,
+                'cash': 0.0,
+                'positions_value': 0.0,
+                'positions': 0,
+                'unrealized_pnl': 0.0,
+                'daily_pnl': 0.0,
+                'total_return': 0.0,
+                'initial_capital': 0.0,
+                'position_details': {},
+                'timestamp': datetime.now().isoformat(),
+                'is_valid': False,  # Indicates no real data available
+                'show_start_message': True  # Flag to show start chatbot message
             }
         
         cash = demo_state.get('cash', 0)
@@ -145,7 +252,9 @@ class DashboardData:
             'daily_pnl': round(daily_pnl, 2),
             'total_return': round(total_return, 2),
             'initial_capital': initial_capital,
-            'position_details': position_details
+            'position_details': position_details,
+            'timestamp': datetime.now().isoformat(),
+            'is_valid': True  # Flag to indicate valid data
         }
     
     def get_performance_history(self, days=30):
@@ -440,50 +549,274 @@ def api_strategy_chart():
 
 @app.route('/api/performance_chart')
 def api_performance_chart():
-    """Generate performance chart"""
-    data = dashboard_data.get_performance_history(90)
+    """Generate performance chart with period support"""
+    period = request.args.get('period', '30D')
+    
+    # Map period to days
+    period_days = {
+        '1D': 1,
+        '7D': 7,
+        '30D': 30,
+        '90D': 90
+    }
+    
+    days = period_days.get(period, 30)
+    data = dashboard_data.get_performance_history(days)
     
     df = pd.DataFrame(data)
     
     fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=df['date'],
-        y=df['portfolio_value'],
-        mode='lines',
-        name='Portfolio Value',
-        line=dict(color='#2E86AB', width=2)
-    ))
+    
+    if len(df) > 0:
+        # Main portfolio value line
+        fig.add_trace(go.Scatter(
+            x=df['date'],
+            y=df['portfolio_value'],
+            mode='lines',
+            name='Portfolio Value',
+            line=dict(color='#3498db', width=3),
+            hovertemplate='<b>%{y:$,.2f}</b><br>%{x}<extra></extra>'
+        ))
+        
+        # Add trend line for longer periods
+        if days >= 7:
+            from scipy import stats
+            x_numeric = pd.to_datetime(df['date']).astype(int) // 10**9
+            slope, intercept, r_value, p_value, std_err = stats.linregress(x_numeric, df['portfolio_value'])
+            trend_line = slope * x_numeric + intercept
+            
+            fig.add_trace(go.Scatter(
+                x=df['date'],
+                y=trend_line,
+                mode='lines',
+                name='Trend',
+                line=dict(color='#e74c3c', width=2, dash='dash'),
+                opacity=0.7,
+                hovertemplate='<b>Trend: %{y:$,.2f}</b><extra></extra>'
+            ))
     
     fig.update_layout(
-        title='Portfolio Performance',
+        title=f'Portfolio Performance ({period})',
         xaxis_title='Date',
         yaxis_title='Portfolio Value ($)',
         template='plotly_white',
-        height=400
+        height=400,
+        hovermode='x unified',
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        ),
+        margin=dict(l=50, r=50, t=50, b=50)
     )
     
     return json.dumps(fig, cls=plotly.utils.PlotlyJSONEncoder)
 
+# API endpoints for trading bot integration
+@app.route('/api/status')
+def api_status():
+    """Status endpoint for health checks"""
+    return jsonify({
+        'status': 'ok',
+        'clients': dashboard_state.get_client_count(),
+        'timestamp': datetime.now().isoformat()
+    })
+
+@app.route('/api/log', methods=['POST'])
+def api_log_message():
+    """Receive log messages from trading bot"""
+    try:
+        data = request.get_json()
+        
+        # Add to activity log
+        dashboard_state.add_activity({
+            'type': data.get('type', 'general'),
+            'message': data.get('message', ''),
+            'level': data.get('level', 'INFO')
+        })
+        
+        # Emit to all clients
+        socketio.emit('log_message', data)
+        
+        return jsonify({'status': 'received'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/api/portfolio', methods=['POST'])
+def api_portfolio_update():
+    """Receive portfolio updates from trading bot"""
+    try:
+        data = request.get_json()
+        
+        # Update dashboard state
+        dashboard_state.update_portfolio(data)
+        
+        # Emit to all clients
+        socketio.emit('portfolio_update', data)
+        
+        return jsonify({'status': 'received'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/api/signal', methods=['POST'])
+def api_signal():
+    """Receive trading signals from bot"""
+    try:
+        data = request.get_json()
+        
+        # Add signal to activity log
+        dashboard_state.add_activity({
+            'type': 'signal',
+            'message': f"Signal: {data.get('action', '').upper()} {data.get('symbol', '')} (confidence: {data.get('confidence', 0):.2f})",
+            'level': 'INFO'
+        })
+        
+        # Emit to all clients
+        socketio.emit('trading_signal', data)
+        
+        return jsonify({'status': 'received'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
 @socketio.on('connect')
 def handle_connect():
     """Handle client connection"""
-    print('Client connected')
+    client_id = request.sid
+    dashboard_state.add_client(client_id)
+    
+    print(f'Client connected: {client_id} (Total: {dashboard_state.get_client_count()})')
+    
     # Send initial data
-    emit('portfolio_update', dashboard_data.get_portfolio_summary())
+    portfolio_data = dashboard_data.get_portfolio_summary()
+    dashboard_state.update_portfolio(portfolio_data)
+    emit('portfolio_update', portfolio_data)
+    
+    # Send recent activity
+    recent_activity = dashboard_state.get_recent_activity(20)
+    for activity in reversed(recent_activity):
+        emit('log_message', activity)
 
 @socketio.on('disconnect')
 def handle_disconnect():
     """Handle client disconnection"""
-    print('Client disconnected')
+    client_id = request.sid
+    dashboard_state.remove_client(client_id)
+    print(f'Client disconnected: {client_id} (Total: {dashboard_state.get_client_count()})')
+
+@socketio.on('request_portfolio_update')
+def handle_portfolio_request():
+    """Handle manual portfolio update request"""
+    try:
+        portfolio_data = dashboard_data.get_portfolio_summary()
+        dashboard_state.update_portfolio(portfolio_data)
+        emit('portfolio_update', portfolio_data)
+    except Exception as e:
+        print(f"Error handling portfolio request: {e}")
 
 def broadcast_portfolio_update():
     """Broadcast portfolio updates to all connected clients"""
-    portfolio_data = dashboard_data.get_portfolio_summary()
-    socketio.emit('portfolio_update', portfolio_data)
+    try:
+        portfolio_data = dashboard_data.get_portfolio_summary()
+        previous_data = dashboard_state.get_portfolio()
+        
+        # Don't broadcast if showing start message (no real data available)
+        if portfolio_data.get('show_start_message', False):
+            return
+        
+        # Validate portfolio data before broadcasting
+        if not portfolio_data or not portfolio_data.get('is_valid', True):
+            return
+        
+        # Ensure minimum data integrity
+        if portfolio_data.get('total_value', 0) < 0:
+            print("Skipping portfolio data with negative total value")
+            return
+        
+        # Only broadcast if there are meaningful changes
+        if previous_data is None or _portfolio_changed(previous_data, portfolio_data):
+            dashboard_state.update_portfolio(portfolio_data)
+            socketio.emit('portfolio_update', portfolio_data)
+            
+            # Add activity for significant changes
+            if previous_data:
+                value_change = portfolio_data.get('total_value', 0) - previous_data.get('total_value', 0)
+                if abs(value_change) > 10:  # Only log changes > $10
+                    dashboard_state.add_activity({
+                        'type': 'info',
+                        'message': f"Portfolio value {'increased' if value_change > 0 else 'decreased'} by ${abs(value_change):.2f}",
+                        'level': 'info'
+                    })
+            
+    except Exception as e:
+        print(f"Error broadcasting portfolio update: {e}")
+
+def _portfolio_changed(old_data, new_data):
+    """Check if portfolio data has meaningfully changed"""
+    if not old_data or not new_data:
+        return True
+    
+    # Check for significant changes in key metrics
+    thresholds = {
+        'total_value': 1.0,      # $1 change
+        'daily_pnl': 0.50,       # $0.50 change
+        'unrealized_pnl': 0.50,  # $0.50 change
+        'positions': 0           # Any change in position count
+    }
+    
+    for key, threshold in thresholds.items():
+        old_val = old_data.get(key, 0)
+        new_val = new_data.get(key, 0)
+        if abs(new_val - old_val) > threshold:
+            return True
+    
+    return False
+
+# Background task for periodic updates
+def background_portfolio_updates():
+    """Background task to periodically update portfolio data"""
+    while True:
+        try:
+            if dashboard_state.get_client_count() > 0:
+                broadcast_portfolio_update()
+            time.sleep(10)  # Update every 10 seconds when clients are connected
+        except Exception as e:
+            print(f"Background update error: {e}")
+            time.sleep(30)  # Wait longer on error
+
+# Start background task
+def start_background_tasks():
+    """Start background tasks"""
+    portfolio_thread = threading.Thread(target=background_portfolio_updates, daemon=True)
+    portfolio_thread.start()
+    print("Background tasks started")
 
 if __name__ == '__main__':
     # Create templates directory if it doesn't exist
     os.makedirs('templates', exist_ok=True)
     
-    # Run the dashboard
-    socketio.run(app, debug=True, host='0.0.0.0', port=5001)
+    # Start background tasks
+    start_background_tasks()
+    
+    # Add some demo activities for testing
+    dashboard_state.add_activity({
+        'type': 'info',
+        'message': 'Dashboard started successfully',
+        'level': 'info'
+    })
+    
+    print("🚀 Starting Enhanced Trading Dashboard...")
+    print("📊 Features: Real-time updates, live activity feed, modern UI")
+    print("🔗 Access: http://localhost:5001")
+    print("👥 Multi-client support enabled")
+    
+    # Run the dashboard with enhanced configuration
+    socketio.run(
+        app, 
+        debug=False,  # Disable debug for cleaner logs
+        host='0.0.0.0', 
+        port=5001,
+        allow_unsafe_werkzeug=True  # For development
+    )

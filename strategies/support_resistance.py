@@ -553,19 +553,51 @@ class SupportResistanceStrategy(BaseStrategy):
         try:
             # Convert single symbol data to multi-symbol format expected by generate_signals
             temp_data = {'TEMP_SYMBOL': data}
+            
+            # Debug: Check data length and recent values
+            print(f"        🔍 Support/Resistance: Data length: {len(data)}")
+            if len(data) >= 50:
+                # Calculate basic indicators for debugging
+                df = data.copy()
+                levels = self._identify_support_resistance_levels(df)
+                
+                current_price = df['Close'].iloc[-1]
+                print(f"        🔍 Current price: {current_price:.2f}")
+                print(f"        🔍 Support levels found: {len([l for l in levels if l['type'] == 'support'])}")
+                print(f"        🔍 Resistance levels found: {len([l for l in levels if l['type'] == 'resistance'])}")
+                
+                # Find nearest levels
+                support_levels = [l for l in levels if l['type'] == 'support' and l['price'] < current_price]
+                resistance_levels = [l for l in levels if l['type'] == 'resistance' and l['price'] > current_price]
+                
+                if support_levels:
+                    nearest_support = max(support_levels, key=lambda x: x['price'])
+                    print(f"        🔍 Nearest support: {nearest_support['price']:.2f} (strength: {nearest_support['strength']:.2f})")
+                
+                if resistance_levels:
+                    nearest_resistance = min(resistance_levels, key=lambda x: x['price'])
+                    print(f"        🔍 Nearest resistance: {nearest_resistance['price']:.2f} (strength: {nearest_resistance['strength']:.2f})")
+            
             signals = self.generate_signals(temp_data)
             
             if signals:
                 signal = signals[0]  # Take the first signal
+                metadata = signal.metadata or {}
+                reasons = metadata.get('reasons', [])
+                strategy_name = metadata.get('strategy', 'support_resistance')
+                reason = f"{strategy_name}: {', '.join(reasons[:3])}, strength: {signal.strength:.2f}"
+                
+                print(f"        ✅ Generated signal: {signal.signal_type}, strength: {signal.strength:.2f}")
+                
                 return {
-                    'action': signal.signal_type.name,
-                    'strength': signal.strength,
-                    'price': signal.price,
-                    'metadata': signal.metadata
+                    'action': 'buy' if signal.signal_type == SignalType.BUY else 'sell',
+                    'confidence': signal.strength,
+                    'reason': reason
                 }
             
-            return {'action': 'HOLD', 'strength': 0, 'price': data.iloc[-1]['Close'], 'metadata': {}}
+            print(f"        ❌ No signals generated")
+            return {'action': 'hold', 'confidence': 0.0, 'reason': 'No S/R signal'}
             
         except Exception as e:
-            print(f"Error in Support/Resistance generate_signal: {e}")
-            return {'action': 'HOLD', 'strength': 0, 'price': data.iloc[-1]['Close'], 'metadata': {}}
+            print(f"        ❌ Error in Support/Resistance generate_signal: {e}")
+            return {'action': 'hold', 'confidence': 0.0, 'reason': f'Error: {e}'}

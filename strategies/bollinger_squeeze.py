@@ -372,19 +372,47 @@ class BollingerSqueezeStrategy(BaseStrategy):
         try:
             # Convert single symbol data to multi-symbol format expected by generate_signals
             temp_data = {'TEMP_SYMBOL': data}
+            
+            # Debug: Check data length and recent values
+            print(f"        🔍 Bollinger Squeeze: Data length: {len(data)}")
+            if len(data) >= 20:
+                # Calculate basic indicators for debugging
+                df = data.copy()
+                df_indicators = self._calculate_squeeze_indicators(df)
+                
+                # Check current conditions
+                current = df_indicators.iloc[-1]
+                print(f"        🔍 Current squeeze state: {current['Squeeze']}")
+                print(f"        🔍 Momentum: {current['Momentum']:.4f}")
+                print(f"        🔍 BB breakout upper/lower: {current['BB_Breakout_Upper']}/{current['BB_Breakout_Lower']}")
+                print(f"        🔍 KC breakout upper/lower: {current['KC_Breakout_Upper']}/{current['KC_Breakout_Lower']}")
+                print(f"        🔍 Volume ratio: {current['Volume_Ratio']:.2f}")
+                
+                # Check for recent squeeze
+                recent_squeeze = df_indicators['Squeeze'].iloc[-5:].any()
+                max_squeeze_count = df_indicators['Squeeze_Count'].max()
+                print(f"        🔍 Recent squeeze (last 5): {recent_squeeze}, max count: {max_squeeze_count}")
+            
             signals = self.generate_signals(temp_data)
             
             if signals:
                 signal = signals[0]  # Take the first signal
+                metadata = signal.metadata or {}
+                reasons = metadata.get('reasons', [])
+                strategy_name = metadata.get('strategy', 'bollinger_squeeze')
+                reason = f"{strategy_name}: {', '.join(reasons[:3])}, strength: {signal.strength:.2f}"
+                
+                print(f"        ✅ Generated signal: {signal.signal_type}, strength: {signal.strength:.2f}")
+                
                 return {
-                    'action': signal.signal_type.name,
-                    'strength': signal.strength,
-                    'price': signal.price,
-                    'metadata': signal.metadata
+                    'action': 'buy' if signal.signal_type == SignalType.BUY else 'sell',
+                    'confidence': signal.strength,
+                    'reason': reason
                 }
             
-            return {'action': 'HOLD', 'strength': 0, 'price': data.iloc[-1]['Close'], 'metadata': {}}
+            print(f"        ❌ No signals generated")
+            return {'action': 'hold', 'confidence': 0.0, 'reason': 'No squeeze signal'}
             
         except Exception as e:
-            print(f"Error in Bollinger Squeeze generate_signal: {e}")
-            return {'action': 'HOLD', 'strength': 0, 'price': data.iloc[-1]['Close'], 'metadata': {}}
+            print(f"        ❌ Error in Bollinger Squeeze generate_signal: {e}")
+            return {'action': 'hold', 'confidence': 0.0, 'reason': f'Error: {e}'}

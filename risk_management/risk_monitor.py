@@ -313,6 +313,59 @@ class RiskMonitor:
         self.risk_limits['max_position_size'] = max(0.05, min(0.2, self.risk_limits['max_position_size']))
         self.risk_limits['max_portfolio_risk'] = max(0.01, min(0.05, self.risk_limits['max_portfolio_risk']))
     
+    def check_time_based_risk(self, positions: pd.DataFrame, 
+                             time_config: Dict[str, Any]) -> List[RiskAlert]:
+        """
+        Check time-based risks including position holding periods and market hours.
+        
+        Args:
+            positions: DataFrame with position information
+            time_config: Time-based configuration parameters
+            
+        Returns:
+            List of time-based risk alerts
+        """
+        alerts = []
+        current_time = datetime.now()
+        
+        if positions.empty:
+            return alerts
+        
+        # Check positions exceeding maximum holding period
+        max_holding_days = time_config.get('max_holding_period_days', 7)
+        
+        for _, position in positions.iterrows():
+            if 'entry_time' in position:
+                try:
+                    if isinstance(position['entry_time'], str):
+                        entry_time = datetime.fromisoformat(position['entry_time'])
+                    else:
+                        entry_time = position['entry_time']
+                    
+                    holding_period = current_time - entry_time
+                    holding_days = holding_period.days
+                    
+                    if holding_days > max_holding_days:
+                        alert = RiskAlert(
+                            timestamp=current_time,
+                            risk_type='holding_period',
+                            level=RiskLevel.HIGH if holding_days > max_holding_days * 1.5 else RiskLevel.MEDIUM,
+                            message=f"Position {position['symbol']} held for {holding_days} days, exceeds limit of {max_holding_days} days",
+                            current_value=holding_days,
+                            threshold=max_holding_days,
+                            recommendations=[
+                                f"Consider closing position in {position['symbol']}",
+                                "Review position exit criteria",
+                                "Monitor position for continued performance"
+                            ]
+                        )
+                        alerts.append(alert)
+                        
+                except (ValueError, KeyError) as e:
+                    self.logger.warning(f"Error parsing entry time for position: {e}")
+        
+        return alerts
+
     def _check_drawdown_risk(self, 
                            portfolio_data: Dict[str, Any],
                            timestamp: datetime) -> List[RiskAlert]:

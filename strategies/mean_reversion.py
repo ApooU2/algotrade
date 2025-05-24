@@ -102,6 +102,13 @@ class MeanReversionStrategy(BaseStrategy):
         """
         Check for mean reversion entry conditions
         """
+        # Debug: Check if required indicators exist
+        required_cols = ['BB_position', 'RSI', 'Price_zscore', 'Volume_ratio']
+        missing_cols = [col for col in required_cols if col not in latest.index or pd.isna(latest[col])]
+        if missing_cols:
+            print(f"      🔍 {symbol}: Missing indicators: {missing_cols}")
+            return None
+        
         # Oversold conditions (Buy signal)
         oversold_conditions = [
             latest['BB_position'] < 0.1,  # Price near lower Bollinger Band
@@ -124,11 +131,17 @@ class MeanReversionStrategy(BaseStrategy):
         buy_strength = sum(oversold_conditions) / len(oversold_conditions)
         sell_strength = sum(overbought_conditions) / len(overbought_conditions)
         
+        # Debug output
+        print(f"      🔍 {symbol}: BB_pos={latest['BB_position']:.3f}, RSI={latest['RSI']:.1f}, Z-score={latest['Price_zscore']:.2f}, Vol_ratio={latest['Volume_ratio']:.2f}")
+        print(f"      🔍 {symbol}: Buy conditions: {oversold_conditions} (strength: {buy_strength:.2f})")
+        print(f"      🔍 {symbol}: Sell conditions: {overbought_conditions} (strength: {sell_strength:.2f})")
+        
         # Additional strength factors
         volatility_factor = min(latest.get('ATR', 0) / latest['Close'] * 100, 1.0)  # Higher volatility = higher opportunity
         
         if buy_strength >= 0.6:  # At least 60% of conditions met
             strength = buy_strength * (1 + volatility_factor * 0.2)
+            print(f"      📊 {symbol}: BUY signal generated with strength {strength:.2f}")
             return Signal(
                 symbol=symbol,
                 signal_type=SignalType.BUY,
@@ -146,6 +159,7 @@ class MeanReversionStrategy(BaseStrategy):
         
         elif sell_strength >= 0.6:  # At least 60% of conditions met
             strength = sell_strength * (1 + volatility_factor * 0.2)
+            print(f"      📊 {symbol}: SELL signal generated with strength {strength:.2f}")
             return Signal(
                 symbol=symbol,
                 signal_type=SignalType.SELL,

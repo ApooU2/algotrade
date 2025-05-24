@@ -367,19 +367,44 @@ class IchimokuStrategy(BaseStrategy):
         try:
             # Convert single symbol data to multi-symbol format expected by generate_signals
             temp_data = {'TEMP_SYMBOL': data}
+            
+            # Debug: Check data length and recent values
+            print(f"        🔍 Ichimoku: Data length: {len(data)}")
+            if len(data) >= 52:  # Need enough data for Ichimoku calculations
+                # Calculate basic indicators for debugging
+                df = data.copy()
+                df = self._calculate_ichimoku_indicators(df)
+                
+                # Check current conditions
+                current = df.iloc[-1]
+                print(f"        🔍 Price vs Kumo: above={current['Above_Kumo']}, below={current['Below_Kumo']}")
+                print(f"        🔍 Tenkan: {current['Tenkan']:.2f}, Kijun: {current['Kijun']:.2f}")
+                print(f"        🔍 Chikou span position: {current['Chikou_Position']:.2f}")
+                if 'Kumo_Thickness' in current:
+                    print(f"        🔍 Kumo thickness: {current['Kumo_Thickness']:.4f}")
+            else:
+                print(f"        🔍 Insufficient data for Ichimoku (need 52+, have {len(data)})")
+            
             signals = self.generate_signals(temp_data)
             
             if signals:
                 signal = signals[0]  # Take the first signal
+                metadata = signal.metadata or {}
+                reasons = metadata.get('reasons', [])
+                strategy_name = metadata.get('strategy', 'ichimoku')
+                reason = f"{strategy_name}: {', '.join(reasons[:3])}, strength: {signal.strength:.2f}"
+                
+                print(f"        ✅ Generated signal: {signal.signal_type}, strength: {signal.strength:.2f}")
+                
                 return {
-                    'action': signal.signal_type.name,
-                    'strength': signal.strength,
-                    'price': signal.price,
-                    'metadata': signal.metadata
+                    'action': 'buy' if signal.signal_type == SignalType.BUY else 'sell',
+                    'confidence': signal.strength,
+                    'reason': reason
                 }
             
-            return {'action': 'HOLD', 'strength': 0, 'price': data.iloc[-1]['Close'], 'metadata': {}}
+            print(f"        ❌ No signals generated")
+            return {'action': 'hold', 'confidence': 0.0, 'reason': 'No Ichimoku signal'}
             
         except Exception as e:
-            print(f"Error in Ichimoku generate_signal: {e}")
-            return {'action': 'HOLD', 'strength': 0, 'price': data.iloc[-1]['Close'], 'metadata': {}}
+            print(f"        ❌ Error in Ichimoku generate_signal: {e}")
+            return {'action': 'hold', 'confidence': 0.0, 'reason': f'Error: {e}'}

@@ -213,6 +213,13 @@ class VWAPStrategy(BaseStrategy):
         """
         Analyze VWAP patterns for signal generation
         """
+        # Debug: Check if required indicators exist
+        required_cols = ['Price_VWAP_Deviation', 'VWAP_Momentum', 'Volume_Ratio', 'VWAP_Convergence']
+        missing_cols = [col for col in required_cols if col not in current.index or pd.isna(current[col])]
+        if missing_cols:
+            print(f"      🔍 {symbol}: Missing VWAP indicators: {missing_cols}")
+            return None
+
         # Signal strength accumulator
         signal_strength = 0
         signal_type = None
@@ -220,6 +227,8 @@ class VWAPStrategy(BaseStrategy):
         
         # 1. VWAP Mean Reversion
         price_deviation = current['Price_VWAP_Deviation']
+        print(f"      🔍 {symbol}: VWAP deviation={price_deviation:.4f}, threshold={self.parameters['price_deviation_threshold']}")
+        
         if abs(price_deviation) > self.parameters['price_deviation_threshold']:
             if price_deviation < -self.parameters['price_deviation_threshold']:
                 # Price below VWAP - potential buy
@@ -234,6 +243,8 @@ class VWAPStrategy(BaseStrategy):
         
         # 2. VWAP Momentum
         vwap_momentum = current['VWAP_Momentum']
+        print(f"      🔍 {symbol}: VWAP momentum={vwap_momentum:.4f}, threshold={self.parameters['vwap_momentum_threshold']}")
+        
         if abs(vwap_momentum) > self.parameters['vwap_momentum_threshold']:
             if vwap_momentum > 0:
                 if signal_type == SignalType.BUY or signal_type is None:
@@ -248,9 +259,15 @@ class VWAPStrategy(BaseStrategy):
         
         # 3. Volume Confirmation
         volume_ratio = current['Volume_Ratio']
+        print(f"      🔍 {symbol}: Volume ratio={volume_ratio:.2f}, threshold={self.parameters['volume_threshold']}")
+        
         if volume_ratio > self.parameters['volume_threshold']:
             signal_strength += 0.2
             reasons.append("high_volume")
+        
+        print(f"      🔍 {symbol}: Current signal strength={signal_strength:.2f}, type={signal_type}")
+        
+        # ...existing code for remaining analysis...
         
         # 4. VWAP Convergence
         convergence = current['VWAP_Convergence']
@@ -280,12 +297,16 @@ class VWAPStrategy(BaseStrategy):
             signal_strength += 0.15
             reasons.append("above_vwap_upper_band")
         
+        print(f"      🔍 {symbol}: Final signal strength={signal_strength:.2f}, minimum=0.5")
+        
         # Only generate signal if strength is sufficient
         if signal_strength < 0.5 or signal_type is None:
             return None
         
         # Cap signal strength
         signal_strength = min(signal_strength, 1.0)
+        
+        print(f"      📊 {symbol}: VWAP signal generated - {signal_type.name} with strength {signal_strength:.2f}")
         
         return Signal(
             symbol=symbol,
@@ -345,15 +366,19 @@ class VWAPStrategy(BaseStrategy):
             
             if signals:
                 signal = signals[0]  # Take the first signal
+                metadata = signal.metadata or {}
+                reasons = metadata.get('reasons', [])
+                strategy_name = metadata.get('strategy', 'vwap')
+                reason = f"{strategy_name}: {', '.join(reasons[:3])}, strength: {signal.strength:.2f}"
+                
                 return {
-                    'action': signal.signal_type.name,
-                    'strength': signal.strength,
-                    'price': signal.price,
-                    'metadata': signal.metadata
+                    'action': 'buy' if signal.signal_type == SignalType.BUY else 'sell',
+                    'confidence': signal.strength,
+                    'reason': reason
                 }
             
-            return {'action': 'HOLD', 'strength': 0, 'price': data.iloc[-1]['Close'], 'metadata': {}}
+            return {'action': 'hold', 'confidence': 0.0, 'reason': 'No VWAP signal'}
             
         except Exception as e:
             print(f"Error in VWAP generate_signal: {e}")
-            return {'action': 'HOLD', 'strength': 0, 'price': data.iloc[-1]['Close'], 'metadata': {}}
+            return {'action': 'hold', 'confidence': 0.0, 'reason': f'Error: {e}'}

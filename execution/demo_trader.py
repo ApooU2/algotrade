@@ -127,7 +127,7 @@ class DemoTradingEngine:
         return prices
     
     def place_order(self, symbol: str, shares: float, order_type: str, 
-                   strategy: str = 'manual') -> bool:
+                   strategy: str = 'manual', force_trade: bool = False) -> bool:
         """
         Place a demo order
         
@@ -136,6 +136,7 @@ class DemoTradingEngine:
             shares: Number of shares
             order_type: 'buy' or 'sell'
             strategy: Strategy that generated this order
+            force_trade: Override market hours restrictions (for risk management)
         """
         if shares <= 0:
             logger.warning(f"Invalid share count: {shares}")
@@ -460,6 +461,57 @@ class DemoTradingEngine:
             os.remove(self.state_file)
         
         logger.info("Portfolio reset to initial state")
+    
+    def get_position_holding_time(self, symbol: str) -> Optional[timedelta]:
+        """Get how long a position has been held"""
+        position = self.positions.get(symbol)
+        if position:
+            return datetime.now() - position.entry_time
+        return None
+    
+    def get_aged_positions(self, max_age_days: int = 7) -> List[str]:
+        """Get positions that have been held longer than max_age_days"""
+        aged_positions = []
+        max_age = timedelta(days=max_age_days)
+        
+        for symbol, position in self.positions.items():
+            holding_time = datetime.now() - position.entry_time
+            if holding_time > max_age:
+                aged_positions.append(symbol)
+        
+        return aged_positions
+    
+    def is_crypto_symbol(self, symbol: str) -> bool:
+        """Check if symbol is a cryptocurrency"""
+        crypto_symbols = {
+            'BTC-USD', 'ETH-USD', 'ADA-USD', 'DOT-USD', 'LINK-USD',
+            'LTC-USD', 'XLM-USD', 'UNI-USD', 'AAVE-USD', 'SUSHI-USD'
+        }
+        return symbol in crypto_symbols
+    
+    def can_trade_symbol_now(self, symbol: str, is_market_hours: bool) -> bool:
+        """Check if we can trade a symbol at the current time"""
+        # Crypto can be traded 24/7
+        if self.is_crypto_symbol(symbol):
+            return True
+        
+        # Stocks can only be traded during market hours
+        return is_market_hours
+    
+    def force_close_aged_positions(self, max_age_days: int = 7, strategy: str = "risk_management") -> List[str]:
+        """Force close positions that have been held too long"""
+        aged_positions = self.get_aged_positions(max_age_days)
+        closed_positions = []
+        
+        for symbol in aged_positions:
+            position = self.positions.get(symbol)
+            if position:
+                logger.info(f"🕒 Force closing aged position in {symbol} (held for {self.get_position_holding_time(symbol)})")
+                success = self.place_order(symbol, position.shares, 'sell', strategy, force_trade=True)
+                if success:
+                    closed_positions.append(symbol)
+        
+        return closed_positions
 
 # Global demo trader instance
 demo_trader = None

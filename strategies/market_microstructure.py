@@ -406,6 +406,21 @@ class MarketMicrostructureStrategy(BaseStrategy):
             symbol = 'TEMP'
             temp_data = {symbol: data}
             
+            # Debug: Check data length and recent values
+            print(f"        🔍 Market Microstructure: Data length: {len(data)}")
+            if len(data) >= 50:
+                current_price = data['Close'].iloc[-1]
+                current_volume = data['Volume'].iloc[-1]
+                avg_volume = data['Volume'].rolling(20).mean().iloc[-1]
+                
+                print(f"        🔍 Current price: {current_price:.2f}")
+                print(f"        🔍 Volume ratio: {current_volume/avg_volume:.2f}")
+                
+                # Calculate some basic microstructure indicators
+                if 'High' in data.columns and 'Low' in data.columns:
+                    spread = ((data['High'] - data['Low']) / data['Close'] * 100).iloc[-1]
+                    print(f"        🔍 Current spread: {spread:.3f}%")
+            
             # Get signals using the main method
             signals = self.generate_signals(temp_data)
             
@@ -417,13 +432,17 @@ class MarketMicrostructureStrategy(BaseStrategy):
                 
                 reason = f"microstructure: {', '.join(reasons)}, flow: {order_flow:.2f}"
                 
+                print(f"        ✅ Generated signal: {signal.signal_type}, strength: {signal.strength:.2f}")
+                
                 return {
                     'action': 'buy' if signal.signal_type == SignalType.BUY else 'sell',
                     'confidence': signal.strength,
                     'reason': reason
                 }
             else:
+                print(f"        ❌ No signals generated")
                 return {'action': 'hold', 'confidence': 0.0, 'reason': 'No microstructure signal'}
                 
         except Exception as e:
+            print(f"        ❌ Error in Market Microstructure generate_signal: {e}")
             return {'action': 'hold', 'confidence': 0.0, 'reason': f'Error: {e}'}

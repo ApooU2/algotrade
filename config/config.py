@@ -123,6 +123,16 @@ PAIRS_TRADING_CONFIG = {
     'max_holding_period': 10
 }
 
+# Time-based Trading Configuration
+TIME_BASED_CONFIG = {
+    'max_holding_period_days': 7,  # Maximum holding period for any position
+    'market_hours_only_stocks': True,  # Only trade stocks during market hours
+    'allow_crypto_24_7': True,  # Allow crypto trading 24/7
+    'force_close_before_weekend': False,  # Force close positions before weekend
+    'max_aftermarket_exposure': 0.1,  # Maximum portfolio exposure during aftermarket hours
+    'position_age_check_interval': 3600,  # Check position ages every hour (seconds)
+}
+
 # Advanced Technical Strategy Configurations
 RSI_DIVERGENCE_CONFIG = {
     'rsi_period': 14,

@@ -8,10 +8,18 @@ import os
 import sys
 import time
 import signal
+import numpy as np
+import argparse
+import logging
+import traceback
+import json
+import threading
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List
+from typing import Dict, List, Optional
 import pandas as pd
 import pytz
+import requests
+from collections import defaultdict, deque
 
 # Add project root to path
 project_root = os.path.dirname(os.path.abspath(__file__))
@@ -32,10 +40,11 @@ from strategies.gap_trading import GapTradingStrategy
 from config.config import (MEAN_REVERSION_CONFIG, MOMENTUM_CONFIG, ML_CONFIG,
                           VWAP_CONFIG, BOLLINGER_SQUEEZE_CONFIG, ICHIMOKU_CONFIG,
                           SUPPORT_RESISTANCE_CONFIG, VOLUME_PROFILE_CONFIG, 
-                          MARKET_MICROSTRUCTURE_CONFIG, GAP_TRADING_CONFIG)
+                          MARKET_MICROSTRUCTURE_CONFIG, GAP_TRADING_CONFIG,
+                          TIME_BASED_CONFIG)
 import logging
 
-# Setup logging
+# Setup logging with smart message deduplication
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -46,16 +55,199 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+class SmartLogger:
+    """Smart logging system that prevents spam and integrates with dashboard"""
+    
+    def __init__(self, dashboard_url="http://localhost:5001", enable_dashboard=True):
+        self.dashboard_url = dashboard_url
+        self.enable_dashboard = enable_dashboard
+        self.recent_messages = deque(maxlen=100)  # Keep last 100 messages
+        self.message_counts = defaultdict(int)
+        self.last_sent_time = defaultdict(float)
+        self.min_interval = 5  # Minimum seconds between duplicate messages
+        
+    def _should_log_message(self, message: str, level: str) -> bool:
+        """Determine if a message should be logged based on recent activity"""
+        current_time = time.time()
+        message_key = f"{level}:{message}"
+        
+        # Always log errors and warnings
+        if level in ['ERROR', 'WARNING']:
+            return True
+            
+        # Check if we've seen this exact message recently
+        if message_key in self.last_sent_time:
+            time_since_last = current_time - self.last_sent_time[message_key]
+            if time_since_last < self.min_interval:
+                self.message_counts[message_key] += 1
+                return False
+        
+        # Update tracking
+        self.last_sent_time[message_key] = current_time
+        self.message_counts[message_key] = 1
+        return True
+    
+    def _format_message_with_count(self, message: str, level: str) -> str:
+        """Add count information to repeated messages"""
+        message_key = f"{level}:{message}"
+        count = self.message_counts.get(message_key, 1)
+        
+        if count > 1:
+            return f"{message} (repeated {count}x)"
+        return message
+    
+    def _send_to_dashboard(self, message: str, level: str, msg_type: str = 'general'):
+        """Send log message to dashboard if available"""
+        if not self.enable_dashboard:
+            return
+            
+        try:
+            payload = {
+                'level': level,
+                'message': message,
+                'type': msg_type,
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            # Try to send to dashboard (non-blocking)
+            threading.Thread(
+                target=self._post_to_dashboard,
+                args=(payload,),
+                daemon=True
+            ).start()
+            
+        except Exception:
+            pass  # Silently fail dashboard integration
+    
+    def _post_to_dashboard(self, payload: dict):
+        """Post message to dashboard endpoint"""
+        try:
+            response = requests.post(
+                f"{self.dashboard_url}/api/log",
+                json=payload,
+                timeout=1  # Quick timeout
+            )
+        except Exception:
+            pass  # Silently fail
+    
+    def info(self, message: str, msg_type: str = 'general'):
+        """Log info message with smart filtering"""
+        if self._should_log_message(message, 'INFO'):
+            formatted_msg = self._format_message_with_count(message, 'INFO')
+            logger.info(formatted_msg)
+            self._send_to_dashboard(formatted_msg, 'INFO', msg_type)
+    
+    def warning(self, message: str, msg_type: str = 'general'):
+        """Log warning message"""
+        formatted_msg = self._format_message_with_count(message, 'WARNING')
+        logger.warning(formatted_msg)
+        self._send_to_dashboard(formatted_msg, 'WARNING', msg_type)
+    
+    def error(self, message: str, msg_type: str = 'general'):
+        """Log error message"""
+        formatted_msg = self._format_message_with_count(message, 'ERROR')
+        logger.error(formatted_msg)
+        self._send_to_dashboard(formatted_msg, 'ERROR', msg_type)
+    
+    def trade(self, message: str):
+        """Log trade-specific message"""
+        self.info(message, 'trade')
+    
+    def signal(self, message: str):
+        """Log signal-specific message"""
+        self.info(message, 'signal')
+    
+    def market(self, message: str):
+        """Log market data message"""
+        self.info(message, 'market')
+
+# Initialize smart logger
+smart_logger = SmartLogger()
+
+class DashboardIntegration:
+    """Integration with real-time dashboard"""
+    
+    def __init__(self, dashboard_url="http://localhost:5001"):
+        self.dashboard_url = dashboard_url
+        self.enabled = False
+        self._test_connection()
+    
+    def _test_connection(self):
+        """Test if dashboard is available"""
+        try:
+            response = requests.get(f"{self.dashboard_url}/api/status", timeout=2)
+            self.enabled = response.status_code == 200
+            if self.enabled:
+                smart_logger.info("🔗 Dashboard integration enabled", 'system')
+            else:
+                print("📱 Dashboard not available - running in standalone mode")
+        except Exception:
+            self.enabled = False
+            print("📱 Dashboard not available - running in standalone mode")
+    
+    def update_portfolio(self, portfolio_data: dict):
+        """Send portfolio update to dashboard"""
+        if not self.enabled:
+            return
+            
+        try:
+            threading.Thread(
+                target=self._post_portfolio_update,
+                args=(portfolio_data,),
+                daemon=True
+            ).start()
+        except Exception:
+            pass
+    
+    def _post_portfolio_update(self, data: dict):
+        """Post portfolio update to dashboard"""
+        try:
+            requests.post(
+                f"{self.dashboard_url}/api/portfolio",
+                json=data,
+                timeout=2
+            )
+        except Exception:
+            pass
+    
+    def send_trade_signal(self, signal_data: dict):
+        """Send trading signal to dashboard"""
+        if not self.enabled:
+            return
+            
+        try:
+            threading.Thread(
+                target=self._post_signal,
+                args=(signal_data,),
+                daemon=True
+            ).start()
+        except Exception:
+            pass
+    
+    def _post_signal(self, data: dict):
+        """Post signal to dashboard"""
+        try:
+            requests.post(
+                f"{self.dashboard_url}/api/signal",
+                json=data,
+                timeout=2
+            )
+        except Exception:
+            pass
+
 class DemoTradingBot:
     """
-    Demo trading bot that uses Yahoo Finance data
+    Demo trading bot that uses Yahoo Finance data with real-time dashboard integration
     Can be easily switched to Interactive Brokers later
     """
     
-    def __init__(self, initial_capital: float = 500):
+    def __init__(self, initial_capital: float = 500, enable_dashboard: bool = True):
         self.demo_trader = DemoTradingEngine(initial_capital)
         self.data_manager = DataManager()
         self.running = False
+        
+        # Dashboard integration
+        self.dashboard = DashboardIntegration() if enable_dashboard else None
         
         # Initialize strategies - include new advanced strategies for comprehensive testing
         self.strategies = {
@@ -136,8 +328,30 @@ class DemoTradingBot:
         }
         
         # Market hours (Eastern Time)
-        self.market_open_time = 9, 30  # 9:30 AM
-        self.market_close_time = 16, 0  # 4:00 PM
+        self.market_open_time = (9, 30)  # 9:30 AM
+        self.market_close_time = (16, 0)  # 4:00 PM
+        self.last_position_age_check = datetime.now()
+        
+        # Time-based configuration
+        self.time_config = TIME_BASED_CONFIG
+        
+        # Adaptive polling configuration
+        self.polling_config = {
+            'min_interval': 15,      # Minimum 15 seconds between cycles
+            'max_interval': 300,     # Maximum 5 minutes between cycles
+            'default_interval': 60,  # Default 1 minute
+            'signal_boost_factor': 0.3,   # Speed up by 70% when signals detected
+            'volatility_boost_factor': 0.5, # Speed up by 50% during high volatility
+            'market_hours_factor': 0.7,     # Faster during market hours
+            'crypto_hours_factor': 1.2,     # Slower during crypto-only hours
+            'no_signal_slowdown': 1.5       # Slow down by 50% when no signals
+        }
+        
+        # Tracking for adaptive polling
+        self.recent_signals = []  # Track recent signal history
+        self.recent_trades = []   # Track recent trade history
+        self.last_cycle_time = None
+        self.consecutive_no_signals = 0
     
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals gracefully"""
@@ -181,6 +395,91 @@ class DemoTradingBot:
         
         return preferred_symbols
     
+    def calculate_market_volatility(self, market_data: Dict[str, pd.DataFrame]) -> float:
+        """Calculate current market volatility for adaptive polling"""
+        volatilities = []
+        
+        for symbol, data in market_data.items():
+            if len(data) >= 20:
+                # Calculate 20-period volatility
+                returns = data['Close'].pct_change().dropna()
+                if len(returns) >= 10:
+                    volatility = returns.rolling(window=10).std().iloc[-1] * 100
+                    if not pd.isna(volatility):
+                        volatilities.append(volatility)
+        
+        if volatilities:
+            avg_volatility = np.mean(volatilities)
+            # Normalize to 0-1 scale (assume 5% daily volatility is "high")
+            return min(avg_volatility / 5.0, 1.0)
+        
+        return 0.5  # Default moderate volatility
+    
+    def calculate_next_polling_interval(self, signals: List[Dict], market_data: Dict[str, pd.DataFrame]) -> float:
+        """Calculate adaptive polling interval based on market conditions"""
+        base_interval = self.polling_config['default_interval']
+        
+        # Factor 1: Signal activity
+        signal_factor = 1.0
+        if signals:
+            # Speed up when signals are detected
+            signal_factor = self.polling_config['signal_boost_factor']
+            self.consecutive_no_signals = 0
+            self.recent_signals.extend(signals)
+        else:
+            # Slow down when no signals
+            self.consecutive_no_signals += 1
+            if self.consecutive_no_signals >= 3:
+                signal_factor = self.polling_config['no_signal_slowdown']
+        
+        # Keep only recent signals (last 10 minutes)
+        cutoff_time = datetime.now() - timedelta(minutes=10)
+        self.recent_signals = [s for s in self.recent_signals 
+                              if s.get('timestamp', datetime.now()) > cutoff_time]
+        
+        # Factor 2: Market volatility
+        volatility = self.calculate_market_volatility(market_data)
+        if volatility > 0.7:  # High volatility
+            volatility_factor = self.polling_config['volatility_boost_factor']
+        else:
+            volatility_factor = 1.0
+        
+        # Factor 3: Market hours
+        is_market_open = self.is_market_hours()
+        if is_market_open:
+            time_factor = self.polling_config['market_hours_factor']
+        else:
+            # Check if we're mainly trading crypto
+            crypto_signals = len([s for s in signals if s.get('symbol', '') in self.crypto_symbols])
+            if crypto_signals > len(signals) * 0.5:  # Majority crypto signals
+                time_factor = self.polling_config['crypto_hours_factor']
+            else:
+                time_factor = 1.0
+        
+        # Factor 4: Recent trade activity
+        recent_trades = self.demo_trader.get_recent_trades(limit=5)
+        trade_factor = 1.0
+        if recent_trades:
+            last_trade_time = datetime.fromisoformat(recent_trades[-1]['timestamp'])
+            minutes_since_trade = (datetime.now() - last_trade_time).total_seconds() / 60
+            if minutes_since_trade < 5:  # Recent trade in last 5 minutes
+                trade_factor = 0.5  # Speed up significantly
+            elif minutes_since_trade < 15:  # Trade in last 15 minutes
+                trade_factor = 0.7  # Speed up moderately
+        
+        # Calculate final interval
+        final_interval = base_interval * signal_factor * volatility_factor * time_factor * trade_factor
+        
+        # Apply min/max bounds
+        final_interval = max(self.polling_config['min_interval'], 
+                           min(self.polling_config['max_interval'], final_interval))
+        
+        # Log the decision for transparency
+        factors_str = f"signal:{signal_factor:.2f} vol:{volatility_factor:.2f} time:{time_factor:.2f} trade:{trade_factor:.2f}"
+        print(f"🕐 Next cycle in {final_interval:.0f}s (factors: {factors_str}, volatility: {volatility:.2f})")
+        
+        return final_interval
+    
     def check_diversification_limit(self, symbol, position_value):
         """Check if adding this position would exceed diversification limits"""
         portfolio_value = self.demo_trader.get_portfolio_summary()['total_equity']
@@ -199,6 +498,74 @@ class DemoTradingBot:
         
         return True, ""
     
+    def check_position_ages(self):
+        """Check and force close positions that have exceeded maximum holding period"""
+        current_time = datetime.now()
+        
+        # Only check every hour to avoid excessive processing
+        time_since_last_check = current_time - self.last_position_age_check
+        if time_since_last_check.total_seconds() < self.time_config['position_age_check_interval']:
+            return
+        
+        self.last_position_age_check = current_time
+        
+        # Check for aged positions
+        max_age_days = self.time_config['max_holding_period_days']
+        aged_positions = self.demo_trader.get_aged_positions(max_age_days)
+        
+        if aged_positions:
+            smart_logger.warning(f"🕒 Found {len(aged_positions)} positions exceeding {max_age_days} day holding limit", 'risk')
+            
+            for symbol in aged_positions:
+                holding_time = self.demo_trader.get_position_holding_time(symbol)
+                smart_logger.warning(f"🕒 {symbol}: held for {holding_time.days} days, {holding_time.seconds//3600} hours", 'risk')
+            
+            # Force close aged positions
+            closed_positions = self.demo_trader.force_close_aged_positions(max_age_days)
+            
+            if closed_positions:
+                smart_logger.info(f"✅ Closed {len(closed_positions)} aged positions: {', '.join(closed_positions)}", 'risk')
+    
+    def check_time_based_risks(self):
+        """Check time-based risks including position ages and market hours compliance"""
+        try:
+            portfolio_summary = self.demo_trader.get_portfolio_summary()
+            
+            if not portfolio_summary['positions']:
+                return
+            
+            # Check for positions approaching or exceeding max holding period
+            max_age_days = self.time_config['max_holding_period_days']
+            warning_threshold = max_age_days * 0.8  # Warn at 80% of max holding period
+            
+            aged_positions = []
+            warning_positions = []
+            
+            for symbol, pos_data in portfolio_summary['positions'].items():
+                entry_time = datetime.fromisoformat(pos_data['entry_time'])
+                holding_time = datetime.now() - entry_time
+                holding_days = holding_time.days + (holding_time.seconds / 86400)  # Include hours as fractional days
+                
+                if holding_days > max_age_days:
+                    aged_positions.append((symbol, holding_days))
+                elif holding_days > warning_threshold:
+                    warning_positions.append((symbol, holding_days))
+            
+            # Display warnings for positions approaching limit
+            if warning_positions:
+                smart_logger.warning(f"⚠️  {len(warning_positions)} positions approaching {max_age_days}-day holding limit:", 'risk')
+                for symbol, days in warning_positions:
+                    smart_logger.warning(f"   📅 {symbol}: {days:.1f} days (limit: {max_age_days} days)", 'risk')
+            
+            # Display alerts for positions exceeding limit (these will be auto-closed)
+            if aged_positions:
+                smart_logger.warning(f"🚨 {len(aged_positions)} positions exceeded {max_age_days}-day holding limit:", 'risk')
+                for symbol, days in aged_positions:
+                    smart_logger.warning(f"   🕒 {symbol}: {days:.1f} days - will be auto-closed", 'risk')
+                    
+        except Exception as e:
+            smart_logger.error(f"Error in time-based risk check: {e}", 'risk')
+
     def display_banner(self):
         """Display welcome banner"""
         print("\n" + "="*70)
@@ -214,7 +581,7 @@ class DemoTradingBot:
     
     def fetch_market_data(self) -> Dict[str, pd.DataFrame]:
         """Fetch current market data for preferred symbols"""
-        print("📊 Fetching market data...")
+        smart_logger.market("📊 Fetching market data...")
         
         # Get preferred symbols based on market hours and positions
         preferred_symbols = self.get_preferred_symbols()
@@ -233,24 +600,25 @@ class DemoTradingBot:
                     market_data[symbol] = data[symbol]
                     current_price = data[symbol]['Close'].iloc[-1]
                     crypto_indicator = "🪙" if symbol in self.crypto_symbols else "📈"
-                    print(f"   ✅ {crypto_indicator} {symbol}: ${current_price:.2f}")
+                    smart_logger.market(f"✅ {crypto_indicator} {symbol}: ${current_price:.2f}")
                 else:
-                    print(f"   ❌ {symbol}: No data available")
+                    smart_logger.warning(f"❌ {symbol}: No data available", 'market')
                     
             except Exception as e:
-                print(f"   ❌ {symbol}: Error - {e}")
+                smart_logger.error(f"❌ {symbol}: Error - {e}", 'market')
         
-        print(f"📊 Successfully fetched data for {len(market_data)} symbols\n")
+        smart_logger.market(f"📊 Successfully fetched data for {len(market_data)} symbols")
         return market_data
     
     def generate_trading_signals(self, market_data: Dict[str, pd.DataFrame]) -> List[Dict]:
         """Generate trading signals from all strategies"""
-        print("🧠 Generating trading signals...")
+        smart_logger.signal("🧠 Generating trading signals...")
         all_signals = []
         
         for strategy_name, strategy in self.strategies.items():
             try:
-                print(f"   🔍 Running {strategy_name} strategy...")
+                smart_logger.signal(f"🔍 Running {strategy_name} strategy...")
+                strategy_signals_count = 0
                 
                 # Generate signals for each symbol
                 for symbol, data in market_data.items():
@@ -260,35 +628,83 @@ class DemoTradingBot:
                     # Each strategy generates its own signals
                     signal = strategy.generate_signal(data)
                     
-                    if signal and signal.get('action') in ['buy', 'sell']:
+                    # Process signals with smart logging
+                    if signal is None:
+                        # Don't spam with "no signal" messages - smart logger will filter
+                        pass
+                    elif signal.get('action') == 'hold' or signal.get('confidence', 0) < 0.1:
+                        # Don't spam with hold signals
+                        pass
+                    elif not signal.get('action') in ['buy', 'sell']:
+                        action = signal.get('action', 'None')
+                        confidence = signal.get('confidence', 0.0)
+                        smart_logger.warning(f"🔍 {symbol}: Invalid action '{action}' (confidence: {confidence:.2f})", 'signal')
+                    else:
                         signal['symbol'] = symbol
                         signal['strategy'] = strategy_name
                         signal['timestamp'] = datetime.now()
                         signal['price'] = data['Close'].iloc[-1]
                         all_signals.append(signal)
+                        strategy_signals_count += 1
                         
                         action = signal['action'].upper()
                         confidence = signal.get('confidence', 0.5)
-                        print(f"      📍 {symbol}: {action} (confidence: {confidence:.2f})")
+                        signal_msg = f"📍 {symbol}: {action} (confidence: {confidence:.2f})"
+                        smart_logger.signal(signal_msg)
+                        
+                        # Send to dashboard
+                        if self.dashboard:
+                            self.dashboard.send_trade_signal({
+                                'symbol': symbol,
+                                'action': action,
+                                'confidence': confidence,
+                                'strategy': strategy_name,
+                                'price': signal['price'],
+                                'timestamp': signal['timestamp'].isoformat()
+                            })
+                
+                if strategy_signals_count > 0:
+                    smart_logger.signal(f"📊 {strategy_name}: Generated {strategy_signals_count} valid signals")
                 
             except Exception as e:
-                print(f"   ❌ Error in {strategy_name}: {e}")
+                smart_logger.error(f"❌ Error in {strategy_name}: {e}", 'signal')
+                import traceback
+                smart_logger.error(f"Traceback: {traceback.format_exc()}", 'signal')
         
-        print(f"🧠 Generated {len(all_signals)} trading signals\n")
+        smart_logger.signal(f"🧠 Generated {len(all_signals)} trading signals total")
         return all_signals
     
     def execute_trades(self, signals: List[Dict]):
-        """Execute trades based on signals"""
+        """Execute trades based on signals with market hours restrictions"""
         if not signals:
-            print("💼 No trades to execute\n")
+            smart_logger.info("💼 No trades to execute", 'trade')
             return
         
-        print("💼 Executing trades...")
+        # Check position ages first and close old positions
+        self.check_position_ages()
+        
+        smart_logger.trade("💼 Executing trades...")
         portfolio_value = self.demo_trader.get_portfolio_summary()['total_equity']
+        is_market_open = self.is_market_hours()
+        
+        # Filter signals based on market hours restrictions
+        valid_signals = []
+        for signal in signals:
+            symbol = signal['symbol']
+            
+            # Check if we can trade this symbol at current time
+            if self.demo_trader.can_trade_symbol_now(symbol, is_market_open):
+                valid_signals.append(signal)
+            else:
+                smart_logger.warning(f"❌ Cannot trade {symbol} outside market hours (not crypto)", 'trade')
+        
+        if not valid_signals:
+            smart_logger.info("💼 No valid trades after market hours filtering", 'trade')
+            return
         
         # Group signals by strategy for proper allocation
         strategy_signals = {}
-        for signal in signals:
+        for signal in valid_signals:
             strategy = signal['strategy']
             if strategy not in strategy_signals:
                 strategy_signals[strategy] = []
@@ -320,7 +736,7 @@ class DemoTradingBot:
                     # Check diversification limits
                     can_buy, reason = self.check_diversification_limit(symbol, position_value)
                     if not can_buy:
-                        print(f"      ❌ Diversification limit: {symbol} - {reason}")
+                        smart_logger.warning(f"❌ Diversification limit: {symbol} - {reason}", 'trade')
                         continue
                     
                     shares = int(position_value / price)
@@ -333,7 +749,7 @@ class DemoTradingBot:
                         # Re-check diversification with minimum position
                         can_buy, reason = self.check_diversification_limit(symbol, position_value)
                         if not can_buy:
-                            print(f"      ❌ Diversification limit (min position): {symbol} - {reason}")
+                            smart_logger.warning(f"❌ Diversification limit (min position): {symbol} - {reason}", 'trade')
                             continue
                     
                     if shares > 0 and position_value <= self.demo_trader.cash:
@@ -342,12 +758,13 @@ class DemoTradingBot:
                         )
                         if success:
                             crypto_indicator = "🪙" if symbol in self.crypto_symbols else "📈"
-                            print(f"      ✅ {crypto_indicator} Bought {shares} shares of {symbol} @ ${price:.2f} (Total: ${position_value:.2f})")
+                            trade_msg = f"✅ {crypto_indicator} Bought {shares} shares of {symbol} @ ${price:.2f} (Total: ${position_value:.2f})"
+                            smart_logger.trade(trade_msg)
                     else:
                         if shares == 0:
-                            print(f"      ❌ Cannot afford {symbol} @ ${price:.2f} (would need ${price:.2f}, allocated ${position_value:.2f})")
+                            smart_logger.warning(f"❌ Cannot afford {symbol} @ ${price:.2f} (would need ${price:.2f}, allocated ${position_value:.2f})", 'trade')
                         elif position_value > self.demo_trader.cash:
-                            print(f"      ❌ Insufficient cash for {symbol}: need ${position_value:.2f}, have ${self.demo_trader.cash:.2f}")
+                            smart_logger.warning(f"❌ Insufficient cash for {symbol}: need ${position_value:.2f}, have ${self.demo_trader.cash:.2f}", 'trade')
                 
                 elif action == 'sell':
                     # Check if we have a position to sell
@@ -359,14 +776,15 @@ class DemoTradingBot:
                             symbol, shares_to_sell, 'sell', strategy_name
                         )
                         if success:
-                            print(f"      ✅ Sold {shares_to_sell} shares of {symbol} @ ${price:.2f}")
+                            trade_msg = f"✅ Sold {shares_to_sell} shares of {symbol} @ ${price:.2f}"
+                            smart_logger.trade(trade_msg)
                     else:
-                        print(f"      ❌ No position in {symbol} to sell")
+                        smart_logger.warning(f"❌ No position in {symbol} to sell", 'trade')
         
-        print("💼 Trade execution completed\n")
+        smart_logger.trade("💼 Trade execution completed")
     
     def display_portfolio_status(self):
-        """Display current portfolio status"""
+        """Display current portfolio status and update dashboard"""
         summary = self.demo_trader.get_portfolio_summary()
         
         print("💼 PORTFOLIO STATUS")
@@ -397,6 +815,15 @@ class DemoTradingBot:
                       f"(P&L: {pnl_pct:+.1f}%)")
         
         print()
+        
+        # Send portfolio update to dashboard
+        if self.dashboard:
+            portfolio_data = {
+                **summary,
+                'timestamp': datetime.now().isoformat(),
+                'performance_metrics': self.demo_trader.get_performance_metrics() or {}
+            }
+            self.dashboard.update_portfolio(portfolio_data)
     
     def display_recent_activity(self):
         """Display recent trading activity"""
@@ -414,7 +841,7 @@ class DemoTradingBot:
             print()
     
     def run_trading_cycle(self):
-        """Run one complete trading cycle"""
+        """Run one complete trading cycle with adaptive timing tracking"""
         cycle_start = datetime.now()
         print(f"\n{'='*20} TRADING CYCLE {cycle_start.strftime('%H:%M:%S')} {'='*20}")
         
@@ -424,19 +851,22 @@ class DemoTradingBot:
             
             if not market_data:
                 print("❌ No market data available, skipping cycle\n")
-                return
+                return []
             
             # 2. Generate trading signals
             signals = self.generate_trading_signals(market_data)
             
-            # 3. Execute trades
+            # 3. Execute trades (includes position age checking)
             self.execute_trades(signals)
             
-            # 4. Update and display portfolio
+            # 4. Check time-based risks
+            self.check_time_based_risks()
+            
+            # 5. Update and display portfolio
             self.display_portfolio_status()
             self.display_recent_activity()
             
-            # 5. Performance metrics
+            # 6. Performance metrics
             metrics = self.demo_trader.get_performance_metrics()
             if metrics:
                 print("📊 PERFORMANCE METRICS")
@@ -449,55 +879,58 @@ class DemoTradingBot:
             cycle_duration = (datetime.now() - cycle_start).total_seconds()
             print(f"⏱️  Cycle completed in {cycle_duration:.1f} seconds")
             
+            # Calculate next polling interval based on signals and market conditions
+            next_interval = self.calculate_next_polling_interval(signals, market_data)
+            
+            return signals, market_data, next_interval
+            
         except Exception as e:
             logger.error(f"Error in trading cycle: {e}")
             print(f"❌ Error in trading cycle: {e}")
+            return [], {}, self.polling_config['default_interval']
     
     def run(self, cycle_interval_minutes: float = 1):
         """
-        Main trading loop
+        Main trading loop with adaptive polling
         
         Args:
-            cycle_interval_minutes: How often to run trading cycles (default: 1 minute)
+            cycle_interval_minutes: Initial polling interval (will adapt based on market conditions)
         """
         self.display_banner()
         self.running = True
         cycle_count = 0
         
+        # Convert initial interval to seconds for adaptive polling
+        current_interval_seconds = cycle_interval_minutes * 60
+        
         # Display initial portfolio state
         self.display_portfolio_status()
+        
+        print(f"🔄 ADAPTIVE POLLING ENABLED")
+        print(f"   📊 Range: {self.polling_config['min_interval']}s - {self.polling_config['max_interval']}s")
+        print(f"   🎯 Initial: {current_interval_seconds:.0f}s")
+        print(f"   ⚡ Speed up factors: Signals ({self.polling_config['signal_boost_factor']:.1f}x), Volatility ({self.polling_config['volatility_boost_factor']:.1f}x)")
+        print()
         
         try:
             while self.running:
                 cycle_count += 1
                 
-                # Run trading cycle
-                self.run_trading_cycle()
+                # Run trading cycle and get adaptive interval
+                result = self.run_trading_cycle()
+                
+                if isinstance(result, tuple) and len(result) == 3:
+                    signals, market_data, next_interval = result
+                    current_interval_seconds = next_interval
+                else:
+                    # Fallback if cycle didn't return proper result
+                    current_interval_seconds = self.polling_config['default_interval']
                 
                 if not self.running:
                     break
                 
-                # Wait for next cycle
-                print(f"⏰ Waiting {cycle_interval_minutes} minute(s) until next cycle...")
-                
-                # Convert to integer seconds for range()
-                total_seconds = int(cycle_interval_minutes * 60)
-                
-                for i in range(total_seconds):
-                    if not self.running:
-                        break
-                    time.sleep(1)
-                    
-                    # Show countdown every 30 seconds for short intervals
-                    if cycle_interval_minutes <= 1 and i % 30 == 0 and i > 0:
-                        remaining_seconds = (total_seconds - i)
-                        if remaining_seconds > 0:
-                            print(f"   ⏱️  {remaining_seconds} seconds remaining...")
-                    # Show countdown every minute for longer intervals
-                    elif cycle_interval_minutes > 1 and i % 60 == 0 and i > 0:
-                        remaining_minutes = (total_seconds - i) // 60
-                        if remaining_minutes > 0:
-                            print(f"   ⏱️  {remaining_minutes} minutes remaining...")
+                # Adaptive wait with countdown
+                self.adaptive_wait(current_interval_seconds)
         
         except KeyboardInterrupt:
             print("\n🛑 Received keyboard interrupt")
@@ -506,6 +939,45 @@ class DemoTradingBot:
             print(f"❌ Unexpected error: {e}")
         finally:
             self.shutdown()
+    
+    def adaptive_wait(self, wait_seconds: float):
+        """
+        Intelligent wait with countdown and opportunity monitoring
+        """
+        total_seconds = int(wait_seconds)
+        
+        if total_seconds <= 30:
+            # Short waits - show every 5 seconds
+            countdown_interval = 5
+            unit = "seconds"
+        elif total_seconds <= 120:
+            # Medium waits - show every 15 seconds  
+            countdown_interval = 15
+            unit = "seconds"
+        else:
+            # Long waits - show every 30 seconds
+            countdown_interval = 30
+            unit = "seconds"
+        
+        print(f"⏰ Adaptive wait: {total_seconds} seconds until next cycle...")
+        
+        for i in range(total_seconds):
+            if not self.running:
+                break
+            
+            time.sleep(1)
+            
+            # Show countdown at intervals
+            remaining = total_seconds - i
+            if remaining > 0 and remaining % countdown_interval == 0:
+                if remaining >= 60:
+                    remaining_display = f"{remaining // 60}m {remaining % 60}s"
+                else:
+                    remaining_display = f"{remaining}s"
+                print(f"   ⏱️  {remaining_display} remaining...")
+        
+        if self.running and total_seconds > 0:
+            print("🔄 Wait complete - starting next cycle")
     
     def shutdown(self):
         """Shutdown the trading bot gracefully"""
@@ -545,29 +1017,43 @@ def main():
     """Main entry point"""
     import argparse
     
-    parser = argparse.ArgumentParser(description='Demo Trading Bot')
+    parser = argparse.ArgumentParser(description='Demo Trading Bot with Adaptive Polling')
     parser.add_argument('--capital', type=float, default=500,
                        help='Initial capital (default: $500)')
     parser.add_argument('--interval', type=float, default=1,
-                       help='Trading cycle interval in minutes (default: 1)')
+                       help='Initial polling interval in minutes (default: 1, will adapt automatically)')
+    parser.add_argument('--min-interval', type=int, default=15,
+                       help='Minimum polling interval in seconds (default: 15)')
+    parser.add_argument('--max-interval', type=int, default=300,
+                       help='Maximum polling interval in seconds (default: 300)')
     parser.add_argument('--reset', action='store_true',
                        help='Reset portfolio to initial state')
     
     args = parser.parse_args()
     
-    print("🚀 Starting Demo Trading Bot...")
+    print("🚀 Starting Demo Trading Bot with Adaptive Polling...")
     
+    # Create bot instance
     bot = DemoTradingBot(args.capital)
     
-    if args.reset:
-        bot.demo_trader.reset_portfolio()
-        print("🔄 Portfolio reset to initial state")
+    # Configure adaptive polling if custom values provided
+    if args.min_interval != 15:
+        bot.polling_config['min_interval'] = args.min_interval
+    if args.max_interval != 300:
+        bot.polling_config['max_interval'] = args.max_interval
     
+    # Reset portfolio if requested
+    if args.reset:
+        print("🔄 Resetting portfolio to initial state...")
+        bot.demo_trader.reset_portfolio()
+    
+    # Start the trading bot
     try:
         bot.run(cycle_interval_minutes=args.interval)
     except Exception as e:
         logger.error(f"Fatal error: {e}")
         print(f"💥 Fatal error: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

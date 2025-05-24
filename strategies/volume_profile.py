@@ -381,6 +381,27 @@ class VolumeProfileStrategy(BaseStrategy):
             symbol = 'TEMP'
             temp_data = {symbol: data}
             
+            # Debug: Check data length and recent values
+            print(f"        🔍 Volume Profile: Data length: {len(data)}")
+            if len(data) >= 50:
+                # Calculate volume profile for debugging
+                current_price = data['Close'].iloc[-1]
+                print(f"        🔍 Current price: {current_price:.2f}")
+                
+                # Calculate basic volume profile
+                lookback = min(100, len(data))
+                recent_data = data.iloc[-lookback:].copy()
+                volume_profile = self._calculate_volume_profile(recent_data)
+                
+                if volume_profile:
+                    poc_price = volume_profile['poc_price']
+                    value_area_high = volume_profile['value_area_high']
+                    value_area_low = volume_profile['value_area_low']
+                    
+                    print(f"        🔍 POC price: {poc_price:.2f}")
+                    print(f"        🔍 Value area: {value_area_low:.2f} - {value_area_high:.2f}")
+                    print(f"        🔍 Price vs POC: {(current_price - poc_price)/poc_price*100:.2f}%")
+            
             # Get signals using the main method
             signals = self.generate_signals(temp_data)
             
@@ -392,13 +413,17 @@ class VolumeProfileStrategy(BaseStrategy):
                 
                 reason = f"volume_profile: {', '.join(reasons)}, POC: {poc_level:.2f}"
                 
+                print(f"        ✅ Generated signal: {signal.signal_type}, strength: {signal.strength:.2f}")
+                
                 return {
                     'action': 'buy' if signal.signal_type == SignalType.BUY else 'sell',
                     'confidence': signal.strength,
                     'reason': reason
                 }
             else:
+                print(f"        ❌ No signals generated")
                 return {'action': 'hold', 'confidence': 0.0, 'reason': 'No volume profile signal'}
                 
         except Exception as e:
+            print(f"        ❌ Error in Volume Profile generate_signal: {e}")
             return {'action': 'hold', 'confidence': 0.0, 'reason': f'Error: {e}'}
