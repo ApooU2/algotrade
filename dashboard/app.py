@@ -203,8 +203,9 @@ class DashboardData:
         position_details = {}
         
         for symbol, position in positions.items():
-            shares = position.get('shares', 0)
-            entry_price = position.get('entry_price', 0)
+            # Handle both field name formats: 'shares'/'quantity' and 'entry_price'/'average_price'
+            shares = position.get('shares') or position.get('quantity', 0)
+            entry_price = position.get('entry_price') or position.get('average_price', 0)
             current_price = position.get('current_price', entry_price)
             
             market_value = shares * current_price

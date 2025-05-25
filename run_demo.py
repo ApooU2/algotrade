@@ -173,7 +173,7 @@ smart_logger = SmartLogger()
 class DashboardIntegration:
     """Integration with real-time dashboard"""
     
-    def __init__(self, dashboard_url: str = "http://localhost:5000", enabled: bool = True):
+    def __init__(self, dashboard_url: str = "http://localhost:5001", enabled: bool = True):
         self.dashboard_url = dashboard_url
         self.enabled = enabled
         
