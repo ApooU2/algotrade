@@ -251,36 +251,22 @@ class SupportResistanceStrategy(BaseStrategy):
         
         # Calculate Fibonacci levels
         diff = high - low
-        fib_levels = [
-            high - 0.236 * diff,  # 23.6% retracement
-            high - 0.382 * diff,  # 38.2% retracement
-            high - 0.5 * diff,    # 50% retracement
-            high - 0.618 * diff,  # 61.8% retracement
-        ]
+        fib_ratios = [0.236, 0.382, 0.5, 0.618, 0.786]
         
-        # Add as support/resistance levels
-        for level in fib_levels:
-            if level > low and level < high:
-                # Determine if it's support or resistance based on current price
-                current_price = df['Close'].iloc[-1]
-                if level < current_price:
-                    self.support_levels[symbol].append({
-                        'level': level,
-                        'touches': 1,
-                        'strength': 2,  # Fibonacci levels get initial strength
-                        'last_touch': df.index[-1],
-                        'age': 0,
-                        'type': 'fibonacci'
-                    })
-                else:
-                    self.resistance_levels[symbol].append({
-                        'level': level,
-                        'touches': 1,
-                        'strength': 2,
-                        'last_touch': df.index[-1],
-                        'age': 0,
-                        'type': 'fibonacci'
-                    })
+        for ratio in fib_ratios:
+            level_price = high - ratio * diff
+            
+            # Only include levels between high and low
+            if low <= level_price <= high:
+                level_type = 'support' if level_price < df['Close'].iloc[-1] else 'resistance'
+                self.support_levels[symbol].append({
+                    'level': level_price,
+                    'touches': 1,
+                    'strength': 2.5,  # Fibonacci levels get moderate strength
+                    'last_touch': df.index[-1],
+                    'age': 0,
+                    'type': f'fibonacci_{ratio:.1%}'
+                })
     
     def _add_pivot_levels(self, symbol: str, df: pd.DataFrame):
         """
@@ -581,7 +567,7 @@ class SupportResistanceStrategy(BaseStrategy):
             signals = self.generate_signals(temp_data)
             
             if signals:
-                signal = signals[0]  # Take the first signal
+                signal = signals[0] # Take the first signal
                 metadata = signal.metadata or {}
                 reasons = metadata.get('reasons', [])
                 strategy_name = metadata.get('strategy', 'support_resistance')
@@ -601,3 +587,151 @@ class SupportResistanceStrategy(BaseStrategy):
         except Exception as e:
             print(f"        ❌ Error in Support/Resistance generate_signal: {e}")
             return {'action': 'hold', 'confidence': 0.0, 'reason': f'Error: {e}'}
+    
+    def _identify_support_resistance_levels(self, df: pd.DataFrame) -> List[Dict]:
+        """
+        Identify support and resistance levels from price data
+        Returns a list of levels with their properties
+        """
+        try:
+            if len(df) < 50:
+                return []
+            
+            lookback = min(self.parameters['lookback_period'], len(df) - 1)
+            tolerance = self.parameters['level_tolerance']
+            
+            # Calculate indicators first
+            df_with_indicators = self._calculate_sr_indicators(df.copy())
+            
+            # Find swing highs and lows
+            recent_data = df_with_indicators.tail(lookback)
+            swing_highs = recent_data[recent_data['Swing_High']]
+            swing_lows = recent_data[recent_data['Swing_Low']]
+            
+            levels = []
+            
+            # Process resistance levels (from swing highs)
+            if not swing_highs.empty:
+                resistance_candidates = swing_highs['High'].tolist()
+                resistance_clusters = self._cluster_levels(
+                    resistance_candidates, tolerance, self.parameters['min_touches'], recent_data.index[-1]
+                )
+                
+                for cluster in resistance_clusters:
+                    levels.append({
+                        'price': cluster['level'],
+                        'type': 'resistance',
+                        'strength': cluster['strength'],
+                        'touches': cluster['touches'],
+                        'age': cluster['age']
+                    })
+            
+            # Process support levels (from swing lows)
+            if not swing_lows.empty:
+                support_candidates = swing_lows['Low'].tolist()
+                support_clusters = self._cluster_levels(
+                    support_candidates, tolerance, self.parameters['min_touches'], recent_data.index[-1]
+                )
+                
+                for cluster in support_clusters:
+                    levels.append({
+                        'price': cluster['level'],
+                        'type': 'support',
+                        'strength': cluster['strength'],
+                        'touches': cluster['touches'],
+                        'age': cluster['age']
+                    })
+            
+            # Add Fibonacci levels if enabled
+            if self.parameters['fibonacci_levels']:
+                fib_levels = self._calculate_fibonacci_levels(recent_data)
+                levels.extend(fib_levels)
+            
+            # Add pivot point levels if enabled
+            if self.parameters['pivot_points'] and 'Pivot' in df_with_indicators.columns:
+                pivot_levels = self._calculate_pivot_point_levels(df_with_indicators)
+                levels.extend(pivot_levels)
+            
+            # Filter levels by strength threshold
+            min_strength = self.parameters.get('level_strength_threshold', 2)
+            filtered_levels = [l for l in levels if l['strength'] >= min_strength]
+            
+            # Sort by strength (strongest first)
+            filtered_levels.sort(key=lambda x: x['strength'], reverse=True)
+            
+            return filtered_levels
+            
+        except Exception as e:
+            print(f"Error in _identify_support_resistance_levels: {e}")
+            return []
+    
+    def _calculate_fibonacci_levels(self, df: pd.DataFrame) -> List[Dict]:
+        """
+        Calculate Fibonacci retracement levels
+        """
+        if len(df) < 20:
+            return []
+        
+        # Find recent significant high and low
+        high = df['High'].tail(50).max()
+        low = df['Low'].tail(50).min()
+        current_price = df['Close'].iloc[-1]
+        
+        # Calculate Fibonacci levels
+        diff = high - low
+        fib_ratios = [0.236, 0.382, 0.5, 0.618, 0.786]
+        
+        levels = []
+        for ratio in fib_ratios:
+            level_price = high - ratio * diff
+            
+            # Only include levels between high and low
+            if low <= level_price <= high:
+                level_type = 'support' if level_price < current_price else 'resistance'
+                levels.append({
+                    'price': level_price,
+                    'type': level_type,
+                    'strength': 2.5,  # Fibonacci levels get moderate strength
+                    'touches': 1,
+                    'age': 0,
+                    'source': f'fibonacci_{ratio:.1%}'
+                })
+        
+        return levels
+    
+    def _calculate_pivot_point_levels(self, df: pd.DataFrame) -> List[Dict]:
+        """
+        Calculate pivot point levels
+        """
+        if 'Pivot' not in df.columns or len(df) < 2:
+            return []
+        
+        latest = df.iloc[-1]
+        current_price = latest['Close']
+        
+        levels = []
+        pivot_data = [
+            ('pivot', latest.get('Pivot')),
+            ('r1', latest.get('R1')),
+            ('s1', latest.get('S1')),
+            ('r2', latest.get('R2')),
+            ('s2', latest.get('S2'))
+        ]
+        
+        for name, level_price in pivot_data:
+            if pd.isna(level_price):
+                continue
+                
+            level_type = 'support' if level_price < current_price else 'resistance'
+            levels.append({
+                'price': level_price,
+                'type': level_type,
+                'strength': 2.0,  # Pivot points get moderate strength
+                'touches': 1,
+                'age': 0,
+                'source': f'pivot_{name}'
+            })
+        
+        return levels
+
+    # ...existing code...

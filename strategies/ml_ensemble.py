@@ -94,66 +94,95 @@ class MLEnsembleStrategy(BaseStrategy):
         """
         features = pd.DataFrame(index=df.index)
         
-        # Price-based features
-        features['returns_1d'] = df['Close'].pct_change()
-        features['returns_5d'] = df['Close'].pct_change(5)
-        features['returns_10d'] = df['Close'].pct_change(10)
-        features['returns_20d'] = df['Close'].pct_change(20)
+        # Normalize column names to handle both uppercase and lowercase
+        df_normalized = df.copy()
+        column_mapping = {}
+        for col in df.columns:
+            if col.lower() in ['close', 'open', 'high', 'low', 'volume']:
+                column_mapping[col] = col.lower().capitalize()
         
-        # Moving average features
-        for window in [5, 10, 20, 50]:
-            features[f'sma_{window}'] = df['Close'].rolling(window).mean()
-            features[f'price_to_sma_{window}'] = df['Close'] / features[f'sma_{window}']
-            features[f'sma_{window}_slope'] = features[f'sma_{window}'].diff(5)
+        # Rename columns if needed
+        if column_mapping:
+            df_normalized = df_normalized.rename(columns=column_mapping)
         
-        # Volatility features
-        features['volatility_5d'] = df['Close'].pct_change().rolling(5).std()
-        features['volatility_20d'] = df['Close'].pct_change().rolling(20).std()
-        features['atr'] = self._calculate_atr(df, 14)
-        features['atr_ratio'] = features['atr'] / df['Close']
+        # Ensure required columns exist
+        required_cols = ['Close', 'Open', 'High', 'Low', 'Volume']
+        for col in required_cols:
+            if col not in df_normalized.columns:
+                print(f"Warning: Missing required column {col} in data")
+                return pd.DataFrame()  # Return empty DataFrame if missing columns
         
-        # Volume features
-        features['volume_ma'] = df['Volume'].rolling(20).mean()
-        features['volume_ratio'] = df['Volume'] / features['volume_ma']
-        features['volume_momentum'] = df['Volume'].pct_change(5)
-        
-        # Technical indicators
-        features['rsi'] = self._calculate_rsi(df['Close'], 14)
-        features['macd'], features['macd_signal'] = self._calculate_macd(df['Close'])
-        features['macd_histogram'] = features['macd'] - features['macd_signal']
-        
-        # Bollinger Bands
-        bb_middle = df['Close'].rolling(20).mean()
-        bb_std = df['Close'].rolling(20).std()
-        features['bb_position'] = (df['Close'] - bb_middle) / (2 * bb_std)
-        features['bb_width'] = (4 * bb_std) / bb_middle
-        
-        # Price patterns
-        features['higher_high'] = (df['High'] > df['High'].shift(1)).astype(int)
-        features['lower_low'] = (df['Low'] < df['Low'].shift(1)).astype(int)
-        features['doji'] = (abs(df['Open'] - df['Close']) / (df['High'] - df['Low'])).fillna(0)
-        
-        # Market structure
-        features['support'] = df['Low'].rolling(20).min()
-        features['resistance'] = df['High'].rolling(20).max()
-        features['price_position'] = (df['Close'] - features['support']) / (features['resistance'] - features['support'])
-        
-        # Momentum oscillators
-        features['stoch_k'] = self._calculate_stochastic(df, 14)
-        features['williams_r'] = self._calculate_williams_r(df, 14)
-        
-        # Gap analysis
-        features['gap'] = (df['Open'] - df['Close'].shift(1)) / df['Close'].shift(1)
-        features['gap_filled'] = (features['gap'] > 0) & (df['Low'] <= df['Close'].shift(1))
-        
-        # Lagged features
-        for lag in [1, 2, 3, 5]:
-            features[f'returns_lag_{lag}'] = features['returns_1d'].shift(lag)
-            features[f'volume_ratio_lag_{lag}'] = features['volume_ratio'].shift(lag)
-            features[f'rsi_lag_{lag}'] = features['rsi'].shift(lag)
-        
-        # Drop rows with NaN values
-        features = features.dropna()
+        try:
+            # Price-based features
+            features['returns_1d'] = df_normalized['Close'].pct_change()
+            features['returns_5d'] = df_normalized['Close'].pct_change(5)
+            features['returns_10d'] = df_normalized['Close'].pct_change(10)
+            features['returns_20d'] = df_normalized['Close'].pct_change(20)
+            
+            # Moving average features
+            for window in [5, 10, 20, 50]:
+                features[f'sma_{window}'] = df_normalized['Close'].rolling(window).mean()
+                features[f'price_to_sma_{window}'] = df_normalized['Close'] / features[f'sma_{window}']
+                features[f'sma_{window}_slope'] = features[f'sma_{window}'].diff(5)
+            
+            # Volatility features
+            features['volatility_5d'] = df_normalized['Close'].pct_change().rolling(5).std()
+            features['volatility_20d'] = df_normalized['Close'].pct_change().rolling(20).std()
+            features['atr'] = self._calculate_atr(df_normalized, 14)
+            features['atr_ratio'] = features['atr'] / df_normalized['Close']
+            
+            # Volume features
+            if 'Volume' in df_normalized.columns:
+                features['volume_ma'] = df_normalized['Volume'].rolling(20).mean()
+                features['volume_ratio'] = df_normalized['Volume'] / features['volume_ma']
+                features['volume_momentum'] = df_normalized['Volume'].pct_change(5)
+            else:
+                # Fill with defaults if Volume not available
+                features['volume_ma'] = 1.0
+                features['volume_ratio'] = 1.0
+                features['volume_momentum'] = 0.0
+            
+            # Technical indicators
+            features['rsi'] = self._calculate_rsi(df_normalized['Close'], 14)
+            features['macd'], features['macd_signal'] = self._calculate_macd(df_normalized['Close'])
+            features['macd_histogram'] = features['macd'] - features['macd_signal']
+            
+            # Bollinger Bands
+            bb_middle = df_normalized['Close'].rolling(20).mean()
+            bb_std = df_normalized['Close'].rolling(20).std()
+            features['bb_position'] = (df_normalized['Close'] - bb_middle) / (2 * bb_std)
+            features['bb_width'] = (4 * bb_std) / bb_middle
+            
+            # Price patterns
+            features['higher_high'] = (df_normalized['High'] > df_normalized['High'].shift(1)).astype(int)
+            features['lower_low'] = (df_normalized['Low'] < df_normalized['Low'].shift(1)).astype(int)
+            features['doji'] = (abs(df_normalized['Open'] - df_normalized['Close']) / (df_normalized['High'] - df_normalized['Low'])).fillna(0)
+            
+            # Market structure
+            features['support'] = df_normalized['Low'].rolling(20).min()
+            features['resistance'] = df_normalized['High'].rolling(20).max()
+            features['price_position'] = (df_normalized['Close'] - features['support']) / (features['resistance'] - features['support'])
+            
+            # Momentum oscillators
+            features['stoch_k'] = self._calculate_stochastic(df_normalized, 14)
+            features['williams_r'] = self._calculate_williams_r(df_normalized, 14)
+            
+            # Gap analysis
+            features['gap'] = (df_normalized['Open'] - df_normalized['Close'].shift(1)) / df_normalized['Close'].shift(1)
+            features['gap_filled'] = (features['gap'] > 0) & (df_normalized['Low'] <= df_normalized['Close'].shift(1))
+            
+            # Lagged features
+            for lag in [1, 2, 3, 5]:
+                features[f'returns_lag_{lag}'] = features['returns_1d'].shift(lag)
+                features[f'volume_ratio_lag_{lag}'] = features['volume_ratio'].shift(lag)
+                features[f'rsi_lag_{lag}'] = features['rsi'].shift(lag)
+            
+            # Drop rows with NaN values
+            features = features.dropna()
+            
+        except Exception as e:
+            print(f"Error creating features: {e}")
+            return pd.DataFrame()
         
         return features
     

@@ -365,26 +365,38 @@ class IchimokuStrategy(BaseStrategy):
         Generate a single signal for demo trading (adapter for generate_signals)
         """
         try:
-            # Convert single symbol data to multi-symbol format expected by generate_signals
-            temp_data = {'TEMP_SYMBOL': data}
-            
-            # Debug: Check data length and recent values
+            # Debug: Check data length
             print(f"        🔍 Ichimoku: Data length: {len(data)}")
-            if len(data) >= 52:  # Need enough data for Ichimoku calculations
-                # Calculate basic indicators for debugging
-                df = data.copy()
-                df = self._calculate_ichimoku_indicators(df)
-                
-                # Check current conditions
-                current = df.iloc[-1]
-                print(f"        🔍 Price vs Kumo: above={current['Above_Kumo']}, below={current['Below_Kumo']}")
-                print(f"        🔍 Tenkan: {current['Tenkan']:.2f}, Kijun: {current['Kijun']:.2f}")
-                print(f"        🔍 Chikou span position: {current['Chikou_Position']:.2f}")
-                if 'Kumo_Thickness' in current:
-                    print(f"        🔍 Kumo thickness: {current['Kumo_Thickness']:.4f}")
-            else:
-                print(f"        🔍 Insufficient data for Ichimoku (need 52+, have {len(data)})")
             
+            # Need enough data for Ichimoku calculations
+            required_length = max(
+                self.parameters['senkou_period'], 
+                self.parameters['displacement']
+            ) + 50
+            
+            if len(data) < required_length:
+                print(f"        🔍 Insufficient data for Ichimoku (need {required_length}+, have {len(data)})")
+                return {'action': 'hold', 'confidence': 0.0, 'reason': 'Insufficient data for Ichimoku'}
+            
+            # Calculate basic indicators for debugging
+            df = data.copy()
+            df = self._calculate_ichimoku_indicators(df)
+            
+            # Check current conditions with correct column names
+            current = df.iloc[-1]
+            
+            # Debug with correct column names
+            if not pd.isna(current['Price_Above_Cloud']):
+                print(f"        🔍 Price vs Cloud: above={current['Price_Above_Cloud']}, below={current['Price_Below_Cloud']}")
+            if not pd.isna(current['Tenkan_Sen']):
+                print(f"        🔍 Tenkan: {current['Tenkan_Sen']:.2f}, Kijun: {current['Kijun_Sen']:.2f}")
+            if 'Chikou_Above_Price' in current and not pd.isna(current['Chikou_Above_Price']):
+                print(f"        🔍 Chikou above price: {current['Chikou_Above_Price']}")
+            if not pd.isna(current['Cloud_Thickness']):
+                print(f"        🔍 Cloud thickness: {current['Cloud_Thickness']:.4f}")
+            
+            # Convert single symbol data to multi-symbol format expected by generate_signals
+            temp_data = {'TEMP_SYMBOL': df}
             signals = self.generate_signals(temp_data)
             
             if signals:
@@ -407,4 +419,6 @@ class IchimokuStrategy(BaseStrategy):
             
         except Exception as e:
             print(f"        ❌ Error in Ichimoku generate_signal: {e}")
+            import traceback
+            print(f"        🔍 Traceback: {traceback.format_exc()}")
             return {'action': 'hold', 'confidence': 0.0, 'reason': f'Error: {e}'}

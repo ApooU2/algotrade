@@ -139,22 +139,25 @@ class BollingerSqueezeStrategy(BaseStrategy):
         """
         period = self.parameters['momentum_period']
         
-        # Linear regression of closing prices
-        momentum = []
+        # Initialize momentum series with NaN values
+        momentum = pd.Series(np.nan, index=df.index)
         
+        # Calculate momentum starting from the period index
         for i in range(period, len(df)):
             y = df['Close'].iloc[i-period:i].values
             x = np.arange(len(y))
             
             # Linear regression slope
-            if len(x) > 1:
-                slope = np.polyfit(x, y, 1)[0]
-                momentum.append(slope)
+            if len(x) > 1 and len(y) > 1:
+                try:
+                    slope = np.polyfit(x, y, 1)[0]
+                    momentum.iloc[i] = slope
+                except:
+                    momentum.iloc[i] = 0
             else:
-                momentum.append(0)
+                momentum.iloc[i] = 0
         
-        # Pad with zeros for the initial period
-        return pd.Series([0] * period + momentum, index=df.index)
+        return momentum
     
     def _calculate_squeeze_count(self, df: pd.DataFrame) -> pd.Series:
         """
@@ -183,19 +186,28 @@ class BollingerSqueezeStrategy(BaseStrategy):
         """
         Calculate rolling volatility percentile
         """
-        window = 100  # 100-period rolling window
+        window = min(100, len(df) - 1)  # Adjust window size based on available data
+        
+        if window < 20:  # Need minimum data for volatility calculation
+            return pd.Series(np.nan, index=df.index)
         
         volatility = df['Close'].pct_change().rolling(window=20).std()
-        percentiles = []
         
+        # Initialize percentiles series with NaN values
+        percentiles = pd.Series(np.nan, index=df.index)
+        
+        # Calculate percentiles starting from the window index
         for i in range(window, len(volatility)):
             current_vol = volatility.iloc[i]
-            window_vols = volatility.iloc[i-window:i]
-            percentile = (window_vols < current_vol).sum() / len(window_vols) * 100
-            percentiles.append(percentile)
+            if pd.isna(current_vol):
+                continue
+                
+            window_vols = volatility.iloc[i-window:i].dropna()
+            if len(window_vols) > 0:
+                percentile = (window_vols < current_vol).sum() / len(window_vols) * 100
+                percentiles.iloc[i] = percentile
         
-        # Pad with NaN for the initial period
-        return pd.Series([np.nan] * window + percentiles, index=df.index)
+        return percentiles
     
     def _generate_squeeze_signals(self, symbol: str, df: pd.DataFrame) -> List[Signal]:
         """

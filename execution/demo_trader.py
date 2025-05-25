@@ -485,7 +485,10 @@ class DemoTradingEngine:
         """Check if symbol is a cryptocurrency"""
         crypto_symbols = {
             'BTC-USD', 'ETH-USD', 'ADA-USD', 'DOT-USD', 'LINK-USD',
-            'LTC-USD', 'XLM-USD', 'UNI-USD', 'AAVE-USD', 'SUSHI-USD'
+            'LTC-USD', 'XLM-USD', 'UNI-USD', 'AAVE-USD', 'SUSHI-USD',
+            'SOL-USD', 'XRP-USD', 'AVAX-USD', 'MATIC-USD', 'ALGO-USD',
+            'FTT-USD', 'NEAR-USD', 'ATOM-USD', 'ICP-USD', 'VET-USD',
+            'SAND-USD', 'MANA-USD', 'CRV-USD', 'COMP-USD', 'MKR-USD'
         }
         return symbol in crypto_symbols
     

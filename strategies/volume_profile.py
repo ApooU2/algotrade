@@ -427,3 +427,78 @@ class VolumeProfileStrategy(BaseStrategy):
         except Exception as e:
             print(f"        ❌ Error in Volume Profile generate_signal: {e}")
             return {'action': 'hold', 'confidence': 0.0, 'reason': f'Error: {e}'}
+    
+    def _calculate_volume_profile(self, df: pd.DataFrame) -> Dict:
+        """
+        Calculate volume profile for the given data
+        Returns POC and value area information
+        """
+        try:
+            if len(df) < 10:
+                return None
+            
+            # Calculate price range
+            price_min = df['Low'].min()
+            price_max = df['High'].max()
+            
+            if price_min >= price_max:
+                return None
+            
+            # Create price bins
+            bins = np.linspace(price_min, price_max, self.parameters['price_bins'])
+            bin_width = bins[1] - bins[0]
+            
+            # Initialize volume profile
+            volume_profile = np.zeros(len(bins) - 1)
+            
+            # Distribute volume across price levels
+            for idx, row in df.iterrows():
+                # Simple distribution: assign volume proportionally to OHLC within the range
+                prices = [row['Open'], row['High'], row['Low'], row['Close']]
+                volume_per_price = row['Volume'] / 4
+                
+                for price in prices:
+                    bin_idx = np.digitize(price, bins) - 1
+                    if 0 <= bin_idx < len(volume_profile):
+                        volume_profile[bin_idx] += volume_per_price
+            
+            # Calculate Point of Control (POC) - highest volume bin
+            poc_idx = np.argmax(volume_profile)
+            poc_price = (bins[poc_idx] + bins[poc_idx + 1]) / 2
+            
+            # Calculate Value Area (70% of volume around POC)
+            total_volume = np.sum(volume_profile)
+            target_volume = total_volume * (self.parameters['value_area_percent'] / 100)
+            
+            # Start from POC and expand outward
+            accumulated_volume = volume_profile[poc_idx]
+            lower_idx = poc_idx
+            upper_idx = poc_idx
+            
+            while accumulated_volume < target_volume and (lower_idx > 0 or upper_idx < len(volume_profile) - 1):
+                # Expand to the side with higher volume
+                lower_volume = volume_profile[lower_idx - 1] if lower_idx > 0 else 0
+                upper_volume = volume_profile[upper_idx + 1] if upper_idx < len(volume_profile) - 1 else 0
+                
+                if lower_volume >= upper_volume and lower_idx > 0:
+                    lower_idx -= 1
+                    accumulated_volume += volume_profile[lower_idx]
+                elif upper_idx < len(volume_profile) - 1:
+                    upper_idx += 1
+                    accumulated_volume += volume_profile[upper_idx]
+                else:
+                    break
+            
+            return {
+                'poc_price': poc_price,
+                'value_area_high': (bins[upper_idx] + bins[upper_idx + 1]) / 2,
+                'value_area_low': (bins[lower_idx] + bins[lower_idx + 1]) / 2,
+                'total_volume': total_volume,
+                'value_area_volume_percent': accumulated_volume / total_volume * 100,
+                'bins': bins,
+                'volumes': volume_profile
+            }
+            
+        except Exception as e:
+            print(f"Error calculating volume profile: {e}")
+            return None
